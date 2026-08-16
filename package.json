@@ -1,0 +1,24 @@
+{
+  "name": "jira-reports",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local-first Jira reporting: OAuth 3LO, SQLite cache, D3 reports",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev --workspace server",
+    "dev:web": "npm run dev --workspace web",
+    "build": "npm run build --workspace web",
+    "start": "npm run start --workspace server",
+    "seed:demo": "node server/scripts/seed-demo.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20.11"
+  }
+}
