@@ -225,6 +225,36 @@ export type TimelineGraphData = {
   storiesDropped: number
 }
 
+export type BreakdownData = {
+  groupBy: string
+  metric: string
+  groups: number
+  rows: {
+    id: string
+    name: string
+    total: number
+    done: number
+    inProgress: number
+    todo: number
+    issues: number
+  }[]
+}
+
+export type CrosstabData = {
+  groupBy: string
+  stackBy: string
+  metric: string
+  keys: string[]
+  groups: number
+  rows: {
+    id: string
+    name: string
+    total: number
+    issues: number
+    values: Record<string, number>
+  }[]
+}
+
 export type WidgetConfig = {
   i: string
   type: string
@@ -239,9 +269,13 @@ export type WidgetConfig = {
 export type Dashboard = {
   id: number
   name: string
+  /** Set for the seeded built-in pages; null for user-created ones. */
+  slug: string | null
   layout: WidgetConfig[]
   updatedAt: number
 }
+
+export type DashboardMeta = { id: number; name: string; slug: string | null; updatedAt?: number }
 
 export type IssueRow = {
   key: string

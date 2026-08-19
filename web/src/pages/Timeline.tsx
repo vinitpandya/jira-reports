@@ -68,7 +68,9 @@ export function Timeline() {
             sub={
               flowStyle === 'bars'
                 ? 'Per week: scope arriving (up) against work finishing (down)'
-                : 'Per week: scope arriving against work finishing, as trends'
+                : flowStyle === 'cumulative'
+                  ? 'Running totals: the gap between the lines is the open scope'
+                  : 'Per week: scope arriving against work finishing, as trends'
             }
             loading={burnup.loading}
             actions={
@@ -79,6 +81,13 @@ export function Timeline() {
                   </button>
                   <button type="button" aria-pressed={flowStyle === 'lines'} onClick={() => setFlowStyle('lines')}>
                     Lines
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={flowStyle === 'cumulative'}
+                    onClick={() => setFlowStyle('cumulative')}
+                  >
+                    Cumulative
                   </button>
                 </div>
                 <TableToggle on={flowTable} onChange={setFlowTable} />

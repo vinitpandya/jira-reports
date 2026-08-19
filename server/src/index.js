@@ -4,7 +4,10 @@ import express from 'express'
 import cookieParser from 'cookie-parser'
 import { PORT, ROOT, DATA_DIR } from './config.js'
 import './db.js'
+import { seedSystemPages } from './pageTemplates.js'
 import { router } from './routes.js'
+
+seedSystemPages()
 
 const app = express()
 app.use(express.json({ limit: '2mb' }))

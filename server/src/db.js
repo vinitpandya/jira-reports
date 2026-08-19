@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS changelog_cursor (
 CREATE TABLE IF NOT EXISTS dashboards (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   name       TEXT NOT NULL,
+  slug       TEXT,                         -- set only for seeded system pages
   layout     TEXT NOT NULL DEFAULT '[]',   -- JSON [{i,type,title,x,y,w,h,options}]
   created_at INTEGER,
   updated_at INTEGER
@@ -178,6 +179,11 @@ CREATE TABLE IF NOT EXISTS sync_runs (
   error       TEXT
 );
 `)
+
+// No migration framework: guard column additions so existing databases catch up.
+if (!db.prepare(`PRAGMA table_info(dashboards)`).all().some((c) => c.name === 'slug')) {
+  db.exec('ALTER TABLE dashboards ADD COLUMN slug TEXT')
+}
 
 export function getConfig(key, fallback = null) {
   const row = db.prepare('SELECT value FROM app_config WHERE key = ?').get(key)

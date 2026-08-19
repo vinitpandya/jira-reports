@@ -1,26 +1,21 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ScopeProvider, useScope } from './lib/scope'
+import { DashboardsProvider, useDashboards } from './lib/dashboards'
 import { ScopeBar } from './components/ScopeBar'
-import { Overview } from './pages/Overview'
-import { Dashboards } from './pages/Dashboards'
-import { CumulativeFlowPage } from './pages/CumulativeFlowPage'
-import { Initiatives } from './pages/Initiatives'
-import { People } from './pages/People'
-import { Insights } from './pages/Insights'
-import { Timeline } from './pages/Timeline'
+import { Modal } from './components/ui'
+import { DashboardPage, DashboardsIndex } from './pages/Dashboards'
 import { Explorer } from './pages/Explorer'
 import { Settings } from './pages/Settings'
 
-const NAV = [
-  { to: '/overview', label: 'Overview', icon: IconGauge },
-  { to: '/dashboards', label: 'Dashboards', icon: IconGrid },
-  { to: '/flow', label: 'Cumulative flow', icon: IconFlow },
-  { to: '/initiatives', label: 'Initiatives', icon: IconTree },
-  { to: '/people', label: 'People & flow', icon: IconPeople },
-  { to: '/insights', label: 'Insights', icon: IconHub },
-  { to: '/timeline', label: 'Timeline', icon: IconClock },
-  { to: '/explorer', label: 'Explorer', icon: IconList },
+/** Fixed order and icons for the seeded built-in pages. */
+const SYSTEM_NAV: { slug: string; icon: () => JSX.Element }[] = [
+  { slug: 'overview', icon: IconGauge },
+  { slug: 'flow', icon: IconFlow },
+  { slug: 'initiatives', icon: IconTree },
+  { slug: 'people', icon: IconPeople },
+  { slug: 'insights', icon: IconHub },
+  { slug: 'timeline', icon: IconClock },
 ]
 
 function Shell() {
@@ -37,12 +32,8 @@ function Shell() {
 
         <nav className="nav">
           <div className="nav-group-label">Reports</div>
-          {NAV.map(({ to, label, icon: Icon }) => (
-            <NavLink key={to} to={to} className={({ isActive }) => (isActive ? 'active' : '')}>
-              <Icon />
-              {label}
-            </NavLink>
-          ))}
+          <ReportsNav />
+          <PagesNav />
           <div className="nav-group-label" style={{ paddingTop: 14 }}>
             Data
           </div>
@@ -61,17 +52,18 @@ function Shell() {
       <main className="main">
         {!isSettings && <ScopeBar />}
         <Routes>
-          <Route path="/" element={<Navigate to="/overview" replace />} />
-          <Route path="/overview" element={<Overview />} />
-          <Route path="/dashboards" element={<Dashboards />} />
-          <Route path="/flow" element={<CumulativeFlowPage />} />
-          <Route path="/initiatives" element={<Initiatives />} />
-          <Route path="/people" element={<People />} />
-          <Route path="/insights" element={<Insights />} />
-          <Route path="/timeline" element={<Timeline />} />
+          <Route path="/" element={<SlugRedirect slug="overview" />} />
+          <Route path="/overview" element={<SlugRedirect slug="overview" />} />
+          <Route path="/flow" element={<SlugRedirect slug="flow" />} />
+          <Route path="/initiatives" element={<SlugRedirect slug="initiatives" />} />
+          <Route path="/people" element={<SlugRedirect slug="people" />} />
+          <Route path="/insights" element={<SlugRedirect slug="insights" />} />
+          <Route path="/timeline" element={<SlugRedirect slug="timeline" />} />
+          <Route path="/dashboards" element={<DashboardsIndex />} />
+          <Route path="/d/:id" element={<DashboardPage />} />
           <Route path="/explorer" element={<Explorer />} />
           <Route path="/settings" element={<Settings />} />
-          <Route path="*" element={<Navigate to="/overview" replace />} />
+          <Route path="*" element={<SlugRedirect slug="overview" />} />
         </Routes>
       </main>
     </div>
@@ -114,10 +106,125 @@ function ThemeToggle() {
   )
 }
 
+/** Seeded built-in pages, in fixed order, plus the interactive Explorer. */
+function ReportsNav() {
+  const { pages } = useDashboards()
+  return (
+    <>
+      {SYSTEM_NAV.map(({ slug, icon: Icon }) => {
+        const page = pages.find((p) => p.slug === slug)
+        if (!page) return null
+        return (
+          <NavLink key={slug} to={`/d/${page.id}`} className={({ isActive }) => (isActive ? 'active' : '')}>
+            <Icon />
+            {page.name}
+          </NavLink>
+        )
+      })}
+      <NavLink to="/explorer" className={({ isActive }) => (isActive ? 'active' : '')}>
+        <IconList />
+        Explorer
+      </NavLink>
+    </>
+  )
+}
+
+/** Old bookmark paths (/overview, /flow, …) forward to the seeded page. */
+function SlugRedirect({ slug }: { slug: string }) {
+  const { pages, loaded } = useDashboards()
+  if (!loaded) return null
+  const page = pages.find((p) => p.slug === slug)
+  return page ? <Navigate to={`/d/${page.id}`} replace /> : <Navigate to="/dashboards" replace />
+}
+
+function PagesNav() {
+  const { pages, create } = useDashboards()
+  const navigate = useNavigate()
+  const [creating, setCreating] = useState(false)
+  const custom = pages.filter((p) => !p.slug)
+
+  return (
+    <>
+      <div className="nav-group-label" style={{ paddingTop: 14 }}>
+        Pages
+      </div>
+      {custom.map((p) => (
+        <NavLink key={p.id} to={`/d/${p.id}`} className={({ isActive }) => (isActive ? 'active' : '')}>
+          <IconGrid />
+          {p.name}
+        </NavLink>
+      ))}
+      <button type="button" className="nav-add" onClick={() => setCreating(true)}>
+        <IconPlus />
+        New page
+      </button>
+      {creating && (
+        <NewPageModal
+          onClose={() => setCreating(false)}
+          onCreate={(name, withStarter) => {
+            setCreating(false)
+            void create(name, withStarter).then((d) => navigate(`/d/${d.id}`))
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function NewPageModal({
+  onClose,
+  onCreate,
+}: {
+  onClose: () => void
+  onCreate: (name: string, withStarter: boolean) => void
+}) {
+  const [name, setName] = useState('')
+  const [starter, setStarter] = useState(true)
+
+  return (
+    <Modal title="New page" onClose={onClose}>
+      <form
+        className="stack"
+        style={{ gap: 12 }}
+        onSubmit={(e) => {
+          e.preventDefault()
+          onCreate(name, starter)
+        }}
+      >
+        <div className="field">
+          <label htmlFor="np-name">Name</label>
+          <input
+            id="np-name"
+            type="text"
+            value={name}
+            placeholder="e.g. Team health"
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+          />
+        </div>
+        <label className="row" style={{ gap: 8, fontSize: 13, cursor: 'pointer' }}>
+          <input type="checkbox" checked={starter} onChange={(e) => setStarter(e.target.checked)} />
+          Start with a few useful widgets
+        </label>
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="primary">
+            Create page
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 export default function App() {
   return (
     <ScopeProvider>
-      <Shell />
+      <DashboardsProvider>
+        <Shell />
+      </DashboardsProvider>
     </ScopeProvider>
   )
 }
@@ -207,6 +314,13 @@ function IconClock() {
     <svg {...S}>
       <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
       <path d="M8 4.6V8l2.4 1.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+function IconPlus() {
+  return (
+    <svg {...S}>
+      <path d="M8 3.2v9.6M3.2 8h9.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   )
 }

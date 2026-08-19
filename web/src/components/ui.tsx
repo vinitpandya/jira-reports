@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { pct } from '../lib/format'
 
 /* ----------------------------------------------------------------- card */
@@ -202,6 +203,31 @@ export function TableToggle({ on, onChange }: { on: boolean; onChange: (v: boole
 }
 
 /* ---------------------------------------------------------------- misc */
+
+export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    document.addEventListener('keydown', esc)
+    return () => document.removeEventListener('keydown', esc)
+  }, [onClose])
+
+  // Portalled to <body>: rendered in place, an ancestor with its own stacking
+  // context (the sticky sidebar, a transformed widget) would paint over it.
+  return createPortal(
+    <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-label={title}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
+          <h2 style={{ margin: 0, fontSize: 15 }}>{title}</h2>
+          <button type="button" className="ghost" onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>,
+    document.body
+  )
+}
 
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (

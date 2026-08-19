@@ -12,6 +12,7 @@ import {
   activeCloudId,
 } from './oauth.js'
 import { runSync, syncStatus, cancelSync } from './sync.js'
+import { templateFor } from './pageTemplates.js'
 import {
   resolveScope,
   summarise,
@@ -22,6 +23,9 @@ import {
   throughput,
   chordFlows,
   cycleTime,
+  breakdown,
+  crosstab,
+  timeseries,
   graphData,
   burnup,
   graphTimeline,
@@ -270,6 +274,47 @@ router.get('/reports/sankey', wrap(async (req, res) => {
   )
 }))
 
+router.get('/reports/breakdown', wrap(async (req, res) => {
+  const { issues } = scopeFrom(req.query)
+  res.json(
+    breakdown({
+      issues,
+      groupBy: String(req.query.groupBy || 'assignee'),
+      metric: req.query.metric || 'count',
+      max: Math.min(Number(req.query.max) || 30, 100),
+    })
+  )
+}))
+
+router.get('/reports/crosstab', wrap(async (req, res) => {
+  const { issues } = scopeFrom(req.query)
+  res.json(
+    crosstab({
+      issues,
+      groupBy: String(req.query.groupBy || 'project'),
+      stackBy: String(req.query.stackBy || 'type'),
+      metric: req.query.metric || 'count',
+      maxGroups: Math.min(Number(req.query.maxGroups) || 30, 100),
+      maxStacks: Math.min(Number(req.query.maxStacks) || 8, 8),
+    })
+  )
+}))
+
+router.get('/reports/timeseries', wrap(async (req, res) => {
+  const { issues } = scopeFrom(req.query)
+  res.json(
+    timeseries({
+      issues,
+      groupBy: String(req.query.groupBy || 'assignee'),
+      metric: req.query.metric || 'count',
+      mode: req.query.mode === 'created' ? 'created' : 'completed',
+      accumulate: req.query.accumulate !== 'false',
+      from: req.query.from,
+      maxGroups: Math.min(Number(req.query.maxGroups) || 6, 12),
+    })
+  )
+}))
+
 router.get('/reports/people', wrap(async (req, res) => {
   const { issues } = scopeFrom(req.query)
   res.json({ people: peopleBreakdown({ issues, metric: req.query.metric || 'count' }) })
@@ -362,13 +407,16 @@ router.get('/reports/graph-timeline', wrap(async (req, res) => {
 const dashboardRow = (row) => ({
   id: row.id,
   name: row.name,
+  slug: row.slug || null,
   layout: JSON.parse(row.layout || '[]'),
   updatedAt: row.updated_at,
 })
 
 router.get('/dashboards', wrap(async (req, res) => {
-  const rows = db.prepare('SELECT id, name, updated_at FROM dashboards ORDER BY name').all()
-  res.json({ dashboards: rows.map((r) => ({ id: r.id, name: r.name, updatedAt: r.updated_at })) })
+  const rows = db.prepare('SELECT id, name, slug, updated_at FROM dashboards ORDER BY name').all()
+  res.json({
+    dashboards: rows.map((r) => ({ id: r.id, name: r.name, slug: r.slug || null, updatedAt: r.updated_at })),
+  })
 }))
 
 router.get('/dashboards/:id', wrap(async (req, res) => {
@@ -399,8 +447,21 @@ router.put('/dashboards/:id', wrap(async (req, res) => {
 }))
 
 router.delete('/dashboards/:id', wrap(async (req, res) => {
+  const row = db.prepare('SELECT slug FROM dashboards WHERE id = ?').get(req.params.id)
+  if (row?.slug) return res.status(400).json({ error: 'Built-in pages cannot be deleted — reset them instead' })
   db.prepare('DELETE FROM dashboards WHERE id = ?').run(req.params.id)
   res.json({ ok: true })
+}))
+
+/** Restore a built-in page to its shipped layout. */
+router.post('/dashboards/:id/reset', wrap(async (req, res) => {
+  const row = db.prepare('SELECT * FROM dashboards WHERE id = ?').get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'No such dashboard' })
+  const template = row.slug ? templateFor(row.slug) : null
+  if (!template) return res.status(400).json({ error: 'Only built-in pages have a template to reset to' })
+  db.prepare('UPDATE dashboards SET name = ?, layout = ?, updated_at = ? WHERE id = ?')
+    .run(template.name, JSON.stringify(template.layout), Date.now(), row.id)
+  res.json(dashboardRow(db.prepare('SELECT * FROM dashboards WHERE id = ?').get(row.id)))
 }))
 
 /** Site base URL so the UI can deep-link an issue key back into Jira. */

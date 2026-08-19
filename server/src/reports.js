@@ -543,6 +543,209 @@ export function peopleBreakdown({ issues, metric = 'count' }) {
   return [...map.values()].sort((a, b) => b.total - a.total)
 }
 
+/* -------------------------------------------------------------- breakdown */
+
+/**
+ * Generic grouped rollup: issues bucketed by any DIMENSIONS key, each bucket
+ * split by progress category. Powers the configurable "Breakdown" widget.
+ */
+export function breakdown({ issues, groupBy = 'assignee', metric = 'count', max = 30 }) {
+  const def = DIMENSIONS[groupBy] || DIMENSIONS.assignee
+  const byId = new Map(issues.map((i) => [i.id, i]))
+
+  const resolve = (issue) => {
+    if (def.hierarchy !== undefined) {
+      const node = def.orAbove
+        ? ancestorAtOrAbove(issue, byId, def.hierarchy)
+        : nearestAncestorAtLevel(issue, byId, def.hierarchy)
+      if (!node) return { id: 'none', name: `No ${def.label.toLowerCase()}` }
+      return { id: String(node.id), name: `${node.key} ${node.summary}`.slice(0, 60) }
+    }
+    return { id: String(def.id(issue)), name: String(def.of(issue)) }
+  }
+
+  const map = new Map()
+  for (const i of issues) {
+    const g = resolve(i)
+    if (!map.has(g.id)) {
+      map.set(g.id, { id: g.id, name: g.name, total: 0, done: 0, inProgress: 0, todo: 0, issues: 0 })
+    }
+    const e = map.get(g.id)
+    const w = metricValue(i, metric)
+    e.total += w
+    e.issues += 1
+    if (i.status_category === 'done') e.done += w
+    else if (i.status_category === 'indeterminate') e.inProgress += w
+    else e.todo += w
+  }
+
+  const rows = [...map.values()].sort((a, b) => b.total - a.total)
+  return { groupBy, metric, groups: rows.length, rows: rows.slice(0, max) }
+}
+
+/* --------------------------------------------------------------- crosstab */
+
+/**
+ * Two-dimensional rollup: rows by `groupBy`, each split across `stackBy`.
+ * Stacks beyond the palette fold into "Other"; values are keyed by stack name.
+ */
+export function crosstab({
+  issues,
+  groupBy = 'project',
+  stackBy = 'type',
+  metric = 'count',
+  maxGroups = 30,
+  maxStacks = 8,
+}) {
+  const byId = new Map(issues.map((i) => [i.id, i]))
+  const resolverFor = (dimKey) => {
+    const def = DIMENSIONS[dimKey] || DIMENSIONS.assignee
+    return (issue) => {
+      if (def.hierarchy !== undefined) {
+        const node = def.orAbove
+          ? ancestorAtOrAbove(issue, byId, def.hierarchy)
+          : nearestAncestorAtLevel(issue, byId, def.hierarchy)
+        return node
+          ? { id: String(node.id), name: `${node.key} ${node.summary}`.slice(0, 60) }
+          : { id: `${dimKey}:none`, name: `No ${def.label.toLowerCase()}` }
+      }
+      return { id: String(def.id(issue)), name: String(def.of(issue)) }
+    }
+  }
+  const groupOf = resolverFor(groupBy)
+  const stackOf = resolverFor(stackBy)
+
+  const cells = issues.map((i) => ({ g: groupOf(i), s: stackOf(i), w: metricValue(i, metric) }))
+
+  const stackTotals = new Map()
+  for (const c of cells) stackTotals.set(c.s.name, (stackTotals.get(c.s.name) || 0) + c.w)
+  const topStacks = [...stackTotals.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, maxStacks)
+    .map(([n]) => n)
+  const keepStacks = new Set(topStacks)
+  const droppedStacks = stackTotals.size - keepStacks.size
+  const otherStack = droppedStacks > 0 ? `Other (${droppedStacks})` : null
+  const keys = otherStack ? [...topStacks, otherStack] : topStacks
+
+  const rows = new Map()
+  for (const c of cells) {
+    if (!rows.has(c.g.id)) {
+      rows.set(c.g.id, {
+        id: c.g.id,
+        name: c.g.name,
+        total: 0,
+        issues: 0,
+        values: Object.fromEntries(keys.map((k) => [k, 0])),
+      })
+    }
+    const row = rows.get(c.g.id)
+    row.total += c.w
+    row.issues += 1
+    row.values[keepStacks.has(c.s.name) ? c.s.name : otherStack] += c.w
+  }
+
+  const sorted = [...rows.values()].sort((a, b) => b.total - a.total)
+  return { groupBy, stackBy, metric, keys, groups: sorted.length, rows: sorted.slice(0, maxGroups) }
+}
+
+/* ------------------------------------------------------------- timeseries */
+
+/**
+ * Weekly metric per dimension group, CFD-shaped ({series, keys}) so the same
+ * chart components can draw it. `mode` picks the dating event (resolved or
+ * created); `accumulate` turns weekly totals into a running sum, with work
+ * before `from` folded into the starting level rather than dropped.
+ */
+export function timeseries({
+  issues,
+  groupBy = 'assignee',
+  metric = 'count',
+  mode = 'completed',
+  accumulate = true,
+  from,
+  maxGroups = 6,
+}) {
+  const def = DIMENSIONS[groupBy] || DIMENSIONS.assignee
+  const byId = new Map(issues.map((i) => [i.id, i]))
+
+  const nameFor = (issue) => {
+    if (def.hierarchy !== undefined) {
+      const node = def.orAbove
+        ? ancestorAtOrAbove(issue, byId, def.hierarchy)
+        : nearestAncestorAtLevel(issue, byId, def.hierarchy)
+      return node ? `${node.key} ${node.summary}`.slice(0, 60) : `No ${def.label.toLowerCase()}`
+    }
+    return String(def.of(issue))
+  }
+
+  const events = []
+  for (const i of issues) {
+    const date = mode === 'created' ? i.created : i.resolved
+    if (!date) continue
+    const w = metricValue(i, metric)
+    if (!w) continue
+    events.push({ ts: new Date(date).getTime(), name: nameFor(i), w })
+  }
+  if (!events.length) return { series: [], keys: [], groupBy, metric, mode, empty: true }
+
+  // Cap the group count: the busiest survive, the rest fold into "Other".
+  const totals = new Map()
+  for (const e of events) totals.set(e.name, (totals.get(e.name) || 0) + e.w)
+  const top = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, maxGroups).map(([n]) => n)
+  const keep = new Set(top)
+  const dropped = totals.size - keep.size
+  const otherKey = dropped > 0 ? `Other (${dropped})` : null
+  const keys = otherKey ? [...top, otherKey] : top
+  const keyFor = (name) => (keep.has(name) ? name : otherKey)
+
+  const startOfWeek = (ts) => {
+    const d = new Date(ts)
+    const day = (d.getUTCDay() + 6) % 7 // Monday = 0
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day)
+  }
+
+  const WEEK = 7 * DAY
+  const now = Date.now()
+  const firstEvent = Math.min(...events.map((e) => e.ts))
+  const fromTs = from ? new Date(`${from}T00:00:00Z`).getTime() : firstEvent
+  // 260 weeks (~5y) keeps an all-time series from ballooning.
+  const start = startOfWeek(Math.max(fromTs, now - 260 * WEEK))
+  const end = startOfWeek(now)
+
+  const zero = () => Object.fromEntries(keys.map((k) => [k, 0]))
+  const weeks = new Map()
+  for (let t = start; t <= end; t += WEEK) weeks.set(t, zero())
+
+  const baseline = zero()
+  for (const e of events) {
+    const k = keyFor(e.name)
+    const wk = startOfWeek(e.ts)
+    if (wk < start) {
+      if (accumulate) baseline[k] += e.w
+      continue
+    }
+    const bucket = weeks.get(wk)
+    if (bucket) bucket[k] += e.w
+  }
+
+  const running = { ...baseline }
+  const series = [...weeks.entries()].map(([t, bucket]) => {
+    const point = { date: dayKey(t) }
+    for (const k of keys) {
+      if (accumulate) {
+        running[k] += bucket[k]
+        point[k] = running[k]
+      } else {
+        point[k] = bucket[k]
+      }
+    }
+    return point
+  })
+
+  return { series, keys, groupBy, metric, mode, accumulate, empty: series.length < 2 }
+}
+
 /* ---------------------------------------------------------------- burn-up */
 
 /**

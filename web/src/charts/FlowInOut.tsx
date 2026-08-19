@@ -7,13 +7,14 @@ import type { BurnupData } from '../lib/api'
 const M = { top: 16, right: 12, bottom: 26, left: 44 }
 const MAX_BAR = 24
 
-export type FlowVariant = 'bars' | 'lines'
+export type FlowVariant = 'bars' | 'lines' | 'cumulative'
 
 /**
  * Scope in, work out. As bars: a mirror around zero — added up (slot 2),
  * completed down (slot 1) — so a week where more lands than leaves visibly
  * bulges upward. As lines: the same two series on one positive axis, better
- * for reading each trend's shape over a long window.
+ * for reading each trend's shape over a long window. As cumulative: both
+ * series as running totals, so the gap between the lines is the open scope.
  */
 export function FlowInOut({
   data,
@@ -29,8 +30,19 @@ export function FlowInOut({
   const { ref, width } = useMeasure<HTMLDivElement>()
   const [hover, setHover] = useState<{ x: number; y: number; i: number } | null>(null)
 
-  const weeks = data.weekly
-  if (!weeks.length) return null
+  const asLines = variant !== 'bars'
+  const cumulative = variant === 'cumulative'
+
+  if (!data.weekly.length) return null
+  let addedSum = 0
+  let completedSum = 0
+  const weeks = cumulative
+    ? data.weekly.map((d) => ({
+        week: d.week,
+        added: (addedSum += d.added),
+        completed: (completedSum += d.completed),
+      }))
+    : data.weekly
 
   const w = Math.max(width, 360)
   const iw = Math.max(60, w - M.left - M.right)
@@ -38,10 +50,9 @@ export function FlowInOut({
 
   const x = d3.scaleBand<string>().domain(weeks.map((d) => d.week)).range([0, iw]).padding(0.3)
   const maxAbs = Math.max(1, d3.max(weeks, (d) => Math.max(d.added, d.completed)) ?? 1)
-  const y =
-    variant === 'lines'
-      ? d3.scaleLinear().domain([0, maxAbs]).nice(4).range([ih, 0])
-      : d3.scaleLinear().domain([-maxAbs, maxAbs]).nice(4).range([ih, 0])
+  const y = asLines
+    ? d3.scaleLinear().domain([0, maxAbs]).nice(4).range([ih, 0])
+    : d3.scaleLinear().domain([-maxAbs, maxAbs]).nice(4).range([ih, 0])
   const barW = Math.min(MAX_BAR, x.bandwidth())
   const zero = y(0)
   const isCount = metric === 'count'
@@ -64,7 +75,7 @@ export function FlowInOut({
           viewBox={`0 0 ${w} ${height}`}
           style={{ minWidth: 360 }}
           role="img"
-          aria-label="Added versus completed per week"
+          aria-label={cumulative ? 'Added versus completed, running totals' : 'Added versus completed per week'}
         >
           <g transform={`translate(${M.left},${M.top})`}>
             {ticks.map((t) => (
@@ -96,7 +107,7 @@ export function FlowInOut({
                 )
               })}
 
-            {variant === 'lines' && (
+            {asLines && (
               <g>
                 <path
                   d={linePath('added')}
@@ -148,7 +159,7 @@ export function FlowInOut({
               />
             ))}
 
-            {hover && variant === 'lines' && (
+            {hover && asLines && (
               <g pointerEvents="none">
                 <line className="axis-line" x1={cxOf(weeks[hover.i])} x2={cxOf(weeks[hover.i])} y1={0} y2={ih} />
               </g>
@@ -158,8 +169,8 @@ export function FlowInOut({
               className="axis-line"
               x1={0}
               x2={iw}
-              y1={variant === 'lines' ? ih : zero}
-              y2={variant === 'lines' ? ih : zero}
+              y1={asLines ? ih : zero}
+              y2={asLines ? ih : zero}
             />
             {weeks.map((d, i) =>
               i % Math.ceil(weeks.length / 6) === 0 ? (
@@ -179,10 +190,10 @@ export function FlowInOut({
       </div>
 
       <Legend
-        shape={variant === 'lines' ? 'line' : 'rect'}
+        shape={asLines ? 'line' : 'rect'}
         items={[
-          { id: 'added', label: 'Added', color: 'var(--series-2)' },
-          { id: 'completed', label: 'Completed', color: 'var(--series-1)' },
+          { id: 'added', label: cumulative ? 'Added to date' : 'Added', color: 'var(--series-2)' },
+          { id: 'completed', label: cumulative ? 'Completed to date' : 'Completed', color: 'var(--series-1)' },
         ]}
       />
 
@@ -192,15 +203,30 @@ export function FlowInOut({
           y={hover.y}
           title={`Week of ${shortDate(weeks[hover.i].week)}`}
           rows={[
-            { name: 'added', value: `${full(weeks[hover.i].added)}${unit}`, color: 'var(--series-2)' },
-            { name: 'completed', value: `${full(weeks[hover.i].completed)}${unit}`, color: 'var(--series-1)' },
+            {
+              name: cumulative ? 'added to date' : 'added',
+              value: `${full(weeks[hover.i].added)}${unit}`,
+              color: 'var(--series-2)',
+            },
+            {
+              name: cumulative ? 'completed to date' : 'completed',
+              value: `${full(weeks[hover.i].completed)}${unit}`,
+              color: 'var(--series-1)',
+            },
           ]}
-          total={{
-            name: 'net scope change',
-            value: `${weeks[hover.i].added - weeks[hover.i].completed >= 0 ? '+' : ''}${full(
-              weeks[hover.i].added - weeks[hover.i].completed
-            )}${unit}`,
-          }}
+          total={
+            cumulative
+              ? {
+                  name: 'still open',
+                  value: `${full(weeks[hover.i].added - weeks[hover.i].completed)}${unit}`,
+                }
+              : {
+                  name: 'net scope change',
+                  value: `${weeks[hover.i].added - weeks[hover.i].completed >= 0 ? '+' : ''}${full(
+                    weeks[hover.i].added - weeks[hover.i].completed
+                  )}${unit}`,
+                }
+          }
         />
       )}
     </div>

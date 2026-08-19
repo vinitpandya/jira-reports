@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { api, type Dashboard, type WidgetConfig } from '../lib/api'
 import { useScope } from '../lib/scope'
-import { Banner, Empty } from '../components/ui'
+import { ACTIVE_KEY, newWidgetId, useDashboards } from '../lib/dashboards'
+import { Banner, Empty, Modal } from '../components/ui'
 import { DashGrid, compactAll, nextFreeY, type LayoutItem } from '../dashboard/Grid'
 import {
+  CHART_FORMS,
   WIDGETS,
   WidgetBody,
+  WidgetQuickBar,
   bodyHeight,
   defaultTitle,
   widgetDef,
@@ -13,59 +17,69 @@ import {
 } from '../dashboard/registry'
 import { NoData } from './Overview'
 
-const ACTIVE_KEY = 'jira-reports.dashboard'
+/** Legacy /dashboards entry point: forward to the last-open (or first) page. */
+export function DashboardsIndex() {
+  const { pages, loaded } = useDashboards()
+  if (!loaded) return null
+  if (!pages.length) return <NoPagesYet />
+  const stored = Number(localStorage.getItem(ACTIVE_KEY))
+  const target = pages.find((p) => p.id === stored) ?? pages[0]
+  return <Navigate to={`/d/${target.id}`} replace />
+}
 
-const STARTER: Omit<WidgetConfig, 'i'>[] = [
-  { type: 'stat', title: '', x: 0, y: 0, w: 3, h: 2, options: { kind: 'percent' } },
-  { type: 'stat', title: '', x: 3, y: 0, w: 3, h: 2, options: { kind: 'issues' } },
-  { type: 'throughput', title: '', x: 6, y: 0, w: 6, h: 3, options: {} },
-  { type: 'cfd', title: '', x: 0, y: 2, w: 6, h: 5, options: {} },
-  { type: 'people-load', title: '', x: 6, y: 3, w: 6, h: 4, options: {} },
-]
+function NoPagesYet() {
+  const { create } = useDashboards()
+  const navigate = useNavigate()
+  return (
+    <div className="page">
+      <Empty title="No pages yet">
+        <button
+          type="button"
+          className="primary"
+          onClick={() =>
+            void create('My page', true).then((d) => navigate(`/d/${d.id}`))
+          }
+        >
+          Create one with starter widgets
+        </button>
+      </Empty>
+    </div>
+  )
+}
 
-const newId = () =>
-  (crypto.randomUUID ? crypto.randomUUID() : `w${Date.now()}${Math.floor(Math.random() * 1e6)}`)
-
-export function Dashboards() {
+export function DashboardPage() {
+  const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const { catalog, sync } = useScope()
-  const [list, setList] = useState<{ id: number; name: string }[]>([])
+  const { pages, rename, remove, refresh } = useDashboards()
   const [active, setActive] = useState<Dashboard | null>(null)
+  const [missing, setMissing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<WidgetConfig | null>(null)
   const [renaming, setRenaming] = useState(false)
   const saveTimer = useRef<number>()
-
-  const loadList = useCallback(async () => {
-    try {
-      const d = await api.get<{ dashboards: { id: number; name: string }[] }>('/dashboards')
-      setList(d.dashboards)
-      return d.dashboards
-    } catch (err) {
-      setError(String((err as Error).message))
-      return []
-    }
-  }, [])
-
-  const open = useCallback(async (id: number) => {
-    try {
-      const d = await api.get<Dashboard>(`/dashboards/${id}`)
-      setActive(d)
-      localStorage.setItem(ACTIVE_KEY, String(id))
-    } catch (err) {
-      setError(String((err as Error).message))
-    }
-  }, [])
+  const scrollTo = useRef<string | null>(null)
 
   useEffect(() => {
-    void (async () => {
-      const dashboards = await loadList()
-      if (!dashboards.length) return
-      const stored = Number(localStorage.getItem(ACTIVE_KEY))
-      const target = dashboards.find((d) => d.id === stored) ?? dashboards[0]
-      await open(target.id)
-    })()
-  }, [loadList, open])
+    let cancelled = false
+    setMissing(false)
+    setActive(null)
+    if (!id) return
+    api
+      .get<Dashboard>(`/dashboards/${id}`)
+      .then((d) => {
+        if (cancelled) return
+        setActive(d)
+        localStorage.setItem(ACTIVE_KEY, String(d.id))
+      })
+      .catch(() => {
+        if (!cancelled) setMissing(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [id])
 
   const persist = useCallback((dashboard: Dashboard) => {
     window.clearTimeout(saveTimer.current)
@@ -92,56 +106,86 @@ export function Dashboards() {
     if (active) persist(active)
   }
 
-  const createDashboard = async (withStarter: boolean) => {
-    const name = `Dashboard ${list.length + 1}`
-    const layout = withStarter ? STARTER.map((w) => ({ ...w, i: newId() })) : []
+  const removePage = async () => {
+    if (!active) return
+    if (!window.confirm(`Delete the page "${active.name}" and its widgets?`)) return
+    await remove(active.id)
+    const rest = pages.filter((p) => p.id !== active.id)
+    navigate(rest.length ? `/d/${rest[0].id}` : '/overview')
+  }
+
+  const resetPage = async () => {
+    if (!active) return
+    if (!window.confirm(`Reset "${active.name}" to its original layout? Your changes to this page are discarded.`)) return
     try {
-      const d = await api.post<Dashboard>('/dashboards', { name, layout })
-      await loadList()
+      const d = await api.post<Dashboard>(`/dashboards/${active.id}/reset`)
       setActive(d)
-      localStorage.setItem(ACTIVE_KEY, String(d.id))
+      await refresh()
     } catch (err) {
       setError(String((err as Error).message))
     }
   }
 
-  const removeDashboard = async () => {
-    if (!active) return
-    await api.del(`/dashboards/${active.id}`)
-    localStorage.removeItem(ACTIVE_KEY)
-    setActive(null)
-    const dashboards = await loadList()
-    if (dashboards.length) await open(dashboards[0].id)
-  }
-
-  const addWidget = (def: WidgetDef) => {
+  const addWidget = (def: WidgetDef, preset?: Record<string, string>) => {
     if (!active) return
     const widget: WidgetConfig = {
-      i: newId(),
+      i: newWidgetId(),
       type: def.type,
       title: '',
       x: 0,
       y: nextFreeY(active.layout),
       w: def.w,
       h: def.h,
-      options: Object.fromEntries(
-        def.fields.filter((f) => f.kind === 'select' && f.choices?.length).map((f) => [f.key, f.choices![0].value])
-      ),
+      options: {
+        ...Object.fromEntries(
+          def.fields.filter((f) => f.kind === 'select' && f.choices?.length).map((f) => [f.key, f.choices![0].value])
+        ),
+        ...preset,
+      },
     }
     const next = { ...active, layout: [...active.layout, widget] }
     setActive(next)
     persist(next)
     setAdding(false)
+    // Straight into configuration; when that closes we scroll the widget into view.
+    scrollTo.current = widget.i
+    setEditing(widget)
   }
 
-  const removeWidget = (id: string) => {
+  const revealPending = () => {
+    const id = scrollTo.current
+    if (!id) return
+    scrollTo.current = null
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-grid-id="${id}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  }
+
+  const closeEditor = () => {
+    setEditing(null)
+    revealPending()
+  }
+
+  const removeWidget = (widgetId: string) => {
     if (!active) return
     const next = {
       ...active,
-      layout: compactAll(active.layout.filter((w) => w.i !== id)).map((p) => {
+      layout: compactAll(active.layout.filter((w) => w.i !== widgetId)).map((p) => {
         const w = active.layout.find((l) => l.i === p.i)!
         return { ...w, x: p.x, y: p.y, w: p.w, h: p.h }
       }),
+    }
+    setActive(next)
+    persist(next)
+  }
+
+  const patchWidget = (id: string, patch: Record<string, string>) => {
+    if (!active) return
+    const next = {
+      ...active,
+      layout: active.layout.map((w) => (w.i === id ? { ...w, options: { ...w.options, ...patch } } : w)),
     }
     setActive(next)
     persist(next)
@@ -153,60 +197,56 @@ export function Dashboards() {
     setActive(next)
     persist(next)
     setEditing(null)
+    revealPending()
   }
 
-  const rename = async (name: string) => {
+  const renamePage = async (name: string) => {
     setRenaming(false)
     if (!active || !name.trim() || name === active.name) return
-    const d = await api.put<Dashboard>(`/dashboards/${active.id}`, { name: name.trim() })
-    setActive({ ...active, name: d.name })
-    await loadList()
+    await rename(active.id, name.trim())
+    setActive({ ...active, name: name.trim() })
   }
 
   if (!catalog?.ready && !sync?.running) return <NoData />
+  if (missing) {
+    return (
+      <div className="page">
+        <Empty title="That page no longer exists">
+          <button type="button" onClick={() => navigate('/dashboards')}>
+            Back to your pages
+          </button>
+        </Empty>
+      </div>
+    )
+  }
+  if (!active) return null
 
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>Dashboards</h1>
+          <h1>{active.name}</h1>
           <p>
             Your own arrangement of widgets. Drag a card by its header, resize from the corner —
-            everything is saved locally and scoped by the filter row above.
+            everything is saved and scoped by the filter row above.
           </p>
         </div>
         <div className="row">
-          {list.length > 0 && (
-            <select
-              value={active?.id ?? ''}
-              onChange={(e) => void open(Number(e.target.value))}
-              aria-label="Dashboard"
-            >
-              {list.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          )}
-          {active && (
-            <>
-              <button type="button" className="ghost" onClick={() => setRenaming(true)}>
-                Rename
-              </button>
-              <button type="button" className="ghost danger" onClick={() => void removeDashboard()}>
-                Delete
-              </button>
-            </>
-          )}
-          <button type="button" onClick={() => void createDashboard(list.length === 0)}>
-            New dashboard
+          <button type="button" className="ghost" onClick={() => setRenaming(true)}>
+            Rename
           </button>
-          {active && (
-            <button type="button" className="primary" onClick={() => setAdding(true)}>
-              + Add widget
+          {active.slug ? (
+            <button type="button" className="ghost" onClick={() => void resetPage()}>
+              Reset layout
+            </button>
+          ) : (
+            <button type="button" className="ghost danger" onClick={() => void removePage()}>
+              Delete page
             </button>
           )}
+          <button type="button" className="primary" onClick={() => setAdding(true)}>
+            + Add widget
+          </button>
         </div>
       </div>
 
@@ -216,14 +256,8 @@ export function Dashboards() {
         </Banner>
       )}
 
-      {!active ? (
-        <Empty title="No dashboards yet">
-          <button type="button" className="primary" onClick={() => void createDashboard(true)}>
-            Create one with starter widgets
-          </button>
-        </Empty>
-      ) : active.layout.length === 0 ? (
-        <Empty title="This dashboard is empty">
+      {active.layout.length === 0 ? (
+        <Empty title="This page is empty">
           <button type="button" className="primary" onClick={() => setAdding(true)}>
             + Add a widget
           </button>
@@ -231,8 +265,8 @@ export function Dashboards() {
       ) : (
         <DashGrid
           layout={active.layout}
-          minSize={(id) => {
-            const w = active.layout.find((l) => l.i === id)
+          minSize={(widgetId) => {
+            const w = active.layout.find((l) => l.i === widgetId)
             const def = w ? widgetDef(w.type) : undefined
             return { w: def?.minW ?? 2, h: def?.minH ?? 2 }
           }}
@@ -244,7 +278,10 @@ export function Dashboards() {
               <>
                 <div className="widget-head" onPointerDown={handles.onMoveDown}>
                   <span className="widget-title">{widget.title || defaultTitle(widget)}</span>
-                  <span className="row" style={{ gap: 2 }}>
+                  {widget.w >= 4 && (
+                    <WidgetQuickBar widget={widget} onPatch={(p) => patchWidget(widget.i, p)} />
+                  )}
+                  <span className="row" style={{ gap: 2, flexShrink: 0 }}>
                     <button
                       type="button"
                       className="ghost widget-btn"
@@ -277,13 +314,38 @@ export function Dashboards() {
 
       {adding && (
         <Modal title="Add a widget" onClose={() => setAdding(false)}>
-          <div className="type-grid">
-            {WIDGETS.map((def) => (
-              <button key={def.type} type="button" className="type-card" onClick={() => addWidget(def)}>
-                <strong>{def.label}</strong>
-                <span>{def.desc}</span>
-              </button>
-            ))}
+          <div className="stack" style={{ gap: 16 }}>
+            <div>
+              <div className="muted" style={{ fontSize: 12, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Build a chart
+              </div>
+              <div className="type-grid">
+                {CHART_FORMS.map((form) => (
+                  <button
+                    key={form.chartType}
+                    type="button"
+                    className="type-card"
+                    onClick={() => addWidget(widgetDef('chart')!, { chartType: form.chartType })}
+                  >
+                    <strong>{form.label}</strong>
+                    <span>{form.desc}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="muted" style={{ fontSize: 12, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Ready-made widgets
+              </div>
+              <div className="type-grid">
+                {WIDGETS.filter((def) => !def.hidden).map((def) => (
+                  <button key={def.type} type="button" className="type-card" onClick={() => addWidget(def)}>
+                    <strong>{def.label}</strong>
+                    <span>{def.desc}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </Modal>
       )}
@@ -292,13 +354,13 @@ export function Dashboards() {
         <WidgetEditor
           widget={editing}
           onSave={saveWidget}
-          onClose={() => setEditing(null)}
+          onClose={closeEditor}
         />
       )}
 
-      {renaming && active && (
-        <Modal title="Rename dashboard" onClose={() => setRenaming(false)}>
-          <RenameForm initial={active.name} onSubmit={rename} />
+      {renaming && (
+        <Modal title="Rename page" onClose={() => setRenaming(false)}>
+          <RenameForm initial={active.name} onSubmit={(name) => void renamePage(name)} />
         </Modal>
       )}
     </div>
@@ -306,28 +368,6 @@ export function Dashboards() {
 }
 
 /* ----------------------------------------------------------------- modals */
-
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    document.addEventListener('keydown', esc)
-    return () => document.removeEventListener('keydown', esc)
-  }, [onClose])
-
-  return (
-    <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-label={title}>
-        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
-          <h2 style={{ margin: 0, fontSize: 15 }}>{title}</h2>
-          <button type="button" className="ghost" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
-}
 
 function RenameForm({ initial, onSubmit }: { initial: string; onSubmit: (name: string) => void }) {
   const [name, setName] = useState(initial)
@@ -376,7 +416,7 @@ function WidgetEditor({
           />
         </div>
 
-        {def.fields.map((f) => (
+        {def.fields.filter((f) => !f.showIf || f.showIf(options)).map((f) => (
           <div className="field" key={f.key}>
             <label htmlFor={`wf-${f.key}`}>{f.label}</label>
             {f.kind === 'select' ? (

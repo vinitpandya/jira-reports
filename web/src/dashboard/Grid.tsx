@@ -167,6 +167,7 @@ export function DashGrid({
         return (
           <div
             key={item.i}
+            data-grid-id={item.i}
             className={`widget${isDragging ? ' dragging' : ''}`}
             style={{ transform: `translate(${left}px, ${top}px)`, width: w, height: h }}
           >

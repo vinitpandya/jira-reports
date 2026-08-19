@@ -98,6 +98,26 @@ a:hover {
 .nav a.active svg {
   color: var(--accent);
 }
+.nav .nav-add {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-weight: 500;
+  font-size: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.nav .nav-add:hover {
+  background: var(--hover-wash);
+  color: var(--text-primary);
+}
 
 .sidebar-foot {
   margin-top: auto;
@@ -722,6 +742,28 @@ table.data td.wide {
   padding: 2px 7px;
   font-size: 12px;
   line-height: 1.4;
+}
+
+/* Inline quick controls on the widget header — compact cousins of .segmented. */
+.widget-quick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  cursor: default;
+}
+.widget-quick .segmented button {
+  padding: 2px 7px;
+  font-size: 11px;
+}
+.widget-quick select {
+  font-size: 11px;
+  padding: 2px 4px;
+  max-width: 110px;
+  border-radius: 6px;
 }
 
 .widget-body {
