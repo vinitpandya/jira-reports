@@ -266,12 +266,25 @@ export type WidgetConfig = {
   options: Record<string, string>
 }
 
+/** Mirror of the client Scope shape (defined in lib/scope to avoid a cycle). */
+export type ScopeData = {
+  projects: string[]
+  roots: string[]
+  followLinks: boolean
+  metric: string
+  range: string
+}
+
+export type SavedFilter = { name: string; scope: ScopeData }
+
 export type Dashboard = {
   id: number
   name: string
   /** Set for the seeded built-in pages; null for user-created ones. */
   slug: string | null
   layout: WidgetConfig[]
+  /** This page's own filter row values; null falls back to the default scope. */
+  scope: ScopeData | null
   updatedAt: number
 }
 
@@ -302,6 +315,8 @@ export type StatusEntry = {
   targetDate: string | null
   prev: { rag: Rag; targetDate: string | null; updateText: string } | null
   progress: { pct: number; done: number; total: number } | null
+  /** Tracked epic fields from Jira (report dates, HL estimation), if synced. */
+  fields: Record<string, string | number> | null
 }
 
 export type StatusReport = { id: number; week: string; prevWeek: string | null; entries: StatusEntry[] }

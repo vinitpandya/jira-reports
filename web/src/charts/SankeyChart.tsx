@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { sankey as d3sankey, sankeyLinkHorizontal, sankeyJustify } from 'd3-sankey'
 import { makeColorScale } from '../lib/palette'
 import { compact, full } from '../lib/format'
@@ -24,10 +24,10 @@ type L = { source: N; target: N; value: number; width: number; index: number }
 /**
  * Flow between ordered dimensions — assignee → epic → progress by default.
  *
- * The first column carries identity, so it gets the categorical slots (capped at
- * eight by the server's "Other" fold — hues are never cycled). Later columns are
- * neutral: their link colour is inherited from the source, and a link leaving a
- * neutral node genuinely aggregates several people, so painting it would lie.
+ * Every column gets its own categorical scale (top eight members per column;
+ * anything beyond falls back to a muted tone), and each link is a gradient
+ * from its source colour to its target colour so the flow reads in colour
+ * from end to end.
  */
 export function SankeyChart({
   data,
@@ -40,6 +40,7 @@ export function SankeyChart({
 }) {
   const { ref, width } = useMeasure<HTMLDivElement>()
   const themeVersion = useThemeVersion()
+  const gradId = useId().replace(/:/g, '')
   const [hover, setHover] = useState<
     { x: number; y: number; title: string; rows: { name: string; value: string; color?: string }[] } | null
   >(null)
@@ -53,10 +54,18 @@ export function SankeyChart({
   )
 
   const colorOf = useMemo(() => {
-    const scale = makeColorScale(firstColumn.map((n) => n.id))
-    return (n: { id: string; column: number }) => (n.column === 0 ? scale(n.id) : 'var(--axis)')
+    const scales = new Map<number, (id: string) => string>()
+    const columnCount = Math.max(1, ...data.nodes.map((n) => n.column + 1))
+    for (let c = 0; c < columnCount; c += 1) {
+      const ids = data.nodes
+        .filter((n) => n.column === c)
+        .sort((a, b) => b.value - a.value)
+        .map((n) => n.id)
+      scales.set(c, makeColorScale(ids.slice(0, 8)))
+    }
+    return (n: { id: string; column: number }) => scales.get(n.column)?.(n.id) ?? 'var(--axis)'
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [firstColumn, themeVersion])
+  }, [data.nodes, themeVersion])
 
   const columns = Math.max(1, ...data.nodes.map((n) => n.column + 1))
   const perColumn = Math.max(
@@ -107,6 +116,21 @@ export function SankeyChart({
           role="img"
           aria-label={`Flow from ${data.dimensions.join(' to ')}`}
         >
+          <defs>
+            {layout.links.map((l) => (
+              // Gradient per link: source colour flowing into target colour.
+              <linearGradient
+                key={l.index}
+                id={`sk-${gradId}-${l.index}`}
+                gradientUnits="userSpaceOnUse"
+                x1={l.source.x1}
+                x2={l.target.x0}
+              >
+                <stop offset="0%" style={{ stopColor: colorOf(l.source) }} />
+                <stop offset="100%" style={{ stopColor: colorOf(l.target) }} />
+              </linearGradient>
+            ))}
+          </defs>
           <g>
             {layout.links.map((l) => {
               const active = focus === null || l.source.id === focus || l.target.id === focus
@@ -115,7 +139,7 @@ export function SankeyChart({
                   key={l.index}
                   d={path(l) ?? undefined}
                   fill="none"
-                  stroke={colorOf(l.source)}
+                  stroke={`url(#sk-${gradId}-${l.index})`}
                   strokeOpacity={active ? 0.34 : 0.08}
                   strokeWidth={Math.max(1, l.width)}
                   onPointerMove={(e) =>

@@ -344,6 +344,17 @@ export const WIDGETS: WidgetDef[] = [
     w: 8, h: 5, minW: 5, minH: 4,
     fields: [
       {
+        key: 'colorBy',
+        label: 'Colour by',
+        kind: 'select',
+        choices: [
+          { value: 'project', label: 'Project' },
+          { value: 'type', label: 'Type' },
+          { value: 'status', label: 'Status' },
+        ],
+        quick: true,
+      },
+      {
         key: 'includeStories',
         label: 'Detail',
         kind: 'select',
@@ -956,7 +967,11 @@ function GraphBody({ widget }: { widget: WidgetConfig }) {
   })
   if (!data?.nodes?.length) return <Empty title="Nothing above story level" />
   if (widget.options.view === 'table') return <GraphTable data={data} />
-  return <NetworkGraph data={data} height={Math.max(220, bodyHeight(widget.h) - 64)} />
+  const colorBy =
+    widget.options.colorBy === 'type' || widget.options.colorBy === 'status'
+      ? widget.options.colorBy
+      : 'project'
+  return <NetworkGraph data={data} colorBy={colorBy} height={Math.max(220, bodyHeight(widget.h) - 64)} />
 }
 
 function BurnupBody({ widget }: { widget: WidgetConfig }) {

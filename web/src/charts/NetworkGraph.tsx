@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as d3 from 'd3'
-import { makeColorScale } from '../lib/palette'
+import { makeColorScale, ordinalRamp } from '../lib/palette'
 import { full, pct } from '../lib/format'
 import { Legend, Tooltip, useMeasure, useThemeVersion } from '../components/ui'
 import type { GraphData, GraphNode } from '../lib/api'
@@ -8,13 +8,29 @@ import type { GraphData, GraphNode } from '../lib/api'
 type SimNode = GraphNode & d3.SimulationNodeDatum & { r: number }
 type SimEdge = { source: SimNode; target: SimNode; kind: 'parent' | 'link'; label?: string }
 
+export type GraphColorBy = 'project' | 'type' | 'status'
+
+const STATUS_LABEL: Record<string, string> = {
+  new: 'To do',
+  indeterminate: 'In progress',
+  done: 'Done',
+}
+
 /**
- * The delivery network as a draggable force layout. Colour follows the project;
- * node size follows how much leaf work rolls up into it. Dragging pins a node
- * (double-click releases it), so a layout can be arranged by hand and it stays
- * where it was put.
+ * The delivery network as a draggable force layout. Colour follows the chosen
+ * dimension (project, issue type, or status category); node size follows how
+ * much leaf work rolls up into it. Dragging pins a node (double-click
+ * releases), so a layout can be arranged by hand and it stays where it was put.
  */
-export function NetworkGraph({ data, height = 460 }: { data: GraphData; height?: number }) {
+export function NetworkGraph({
+  data,
+  height = 460,
+  colorBy = 'project',
+}: {
+  data: GraphData
+  height?: number
+  colorBy?: GraphColorBy
+}) {
   const { ref, width } = useMeasure<HTMLDivElement>()
   const themeVersion = useThemeVersion()
   const svgRef = useRef<SVGSVGElement>(null)
@@ -24,16 +40,30 @@ export function NetworkGraph({ data, height = 460 }: { data: GraphData; height?:
 
   const w = Math.max(width, 420)
 
-  const projects = useMemo(
-    () => [...new Set(data.nodes.map((n) => n.project))].sort(),
-    [data.nodes]
-  )
+  const keyOf = (n: GraphNode) =>
+    colorBy === 'status'
+      ? STATUS_LABEL[n.category] ?? 'To do'
+      : colorBy === 'type'
+        ? n.type
+        : n.project
+
+  const legendKeys = useMemo(() => {
+    if (colorBy === 'status') return ['To do', 'In progress', 'Done']
+    return [...new Set(data.nodes.map((n) => (colorBy === 'type' ? n.type : n.project)))].sort()
+  }, [data.nodes, colorBy])
+
   const colorOf = useMemo(() => {
-    const scale = makeColorScale(projects.slice(0, 8))
-    const known = new Set(projects.slice(0, 8))
-    return (p: string) => (known.has(p) ? scale(p) : 'var(--axis)')
+    if (colorBy === 'status') {
+      // The ordered blue ramp, matching how state reads on the other charts.
+      const ramp = ordinalRamp(3)
+      const map: Record<string, string> = { 'To do': ramp[0], 'In progress': ramp[1], Done: ramp[2] }
+      return (k: string) => map[k] ?? 'var(--axis)'
+    }
+    const scale = makeColorScale(legendKeys.slice(0, 8))
+    const known = new Set(legendKeys.slice(0, 8))
+    return (k: string) => (known.has(k) ? scale(k) : 'var(--axis)')
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projects, themeVersion])
+  }, [legendKeys, colorBy, themeVersion])
 
   // Build simulation state once per dataset; positions live in these objects.
   const sim = useMemo(() => {
@@ -165,8 +195,8 @@ export function NetworkGraph({ data, height = 460 }: { data: GraphData; height?:
                 <circle
                   data-node
                   r={n.r}
-                  fill={colorOf(n.project)}
-                  opacity={n.category === 'done' ? 0.55 : 1}
+                  fill={colorOf(keyOf(n))}
+                  opacity={colorBy !== 'status' && n.category === 'done' ? 0.55 : 1}
                   stroke="var(--surface-1)"
                   strokeWidth={2}
                   onPointerDown={onNodeDown(n)}
@@ -201,7 +231,7 @@ export function NetworkGraph({ data, height = 460 }: { data: GraphData; height?:
       </div>
 
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <Legend items={projects.map((p) => ({ id: p, label: p, color: colorOf(p) }))} />
+        <Legend items={legendKeys.map((k) => ({ id: k, label: k, color: colorOf(k) }))} />
         <span className="muted" style={{ fontSize: 12, paddingTop: 12, flex: '0 0 auto' }}>
           Drag pins · double-click releases · scroll zooms
         </span>

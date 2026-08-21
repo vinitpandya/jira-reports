@@ -229,6 +229,12 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 if (!db.prepare(`PRAGMA table_info(dashboards)`).all().some((c) => c.name === 'slug')) {
   db.exec('ALTER TABLE dashboards ADD COLUMN slug TEXT')
 }
+if (!db.prepare(`PRAGMA table_info(dashboards)`).all().some((c) => c.name === 'scope')) {
+  db.exec('ALTER TABLE dashboards ADD COLUMN scope TEXT') // per-page filter, JSON
+}
+if (!db.prepare(`PRAGMA table_info(issues)`).all().some((c) => c.name === 'custom_fields')) {
+  db.exec('ALTER TABLE issues ADD COLUMN custom_fields TEXT') // tracked extras, JSON {label: value}
+}
 
 // report_entries v1 had UNIQUE(report_id, initiative_id) and no team column;
 // SQLite cannot drop a constraint, so rebuild the table once.

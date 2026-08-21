@@ -409,6 +409,7 @@ const dashboardRow = (row) => ({
   name: row.name,
   slug: row.slug || null,
   layout: JSON.parse(row.layout || '[]'),
+  scope: row.scope ? JSON.parse(row.scope) : null,
   updatedAt: row.updated_at,
 })
 
@@ -441,9 +442,35 @@ router.put('/dashboards/:id', wrap(async (req, res) => {
   if (!row) return res.status(404).json({ error: 'No such dashboard' })
   const name = req.body?.name !== undefined ? String(req.body.name).trim() || row.name : row.name
   const layout = req.body?.layout !== undefined ? JSON.stringify(req.body.layout) : row.layout
-  db.prepare('UPDATE dashboards SET name = ?, layout = ?, updated_at = ? WHERE id = ?')
-    .run(name, layout, Date.now(), row.id)
+  const scope = req.body?.scope !== undefined ? JSON.stringify(req.body.scope) : row.scope
+  db.prepare('UPDATE dashboards SET name = ?, layout = ?, scope = ?, updated_at = ? WHERE id = ?')
+    .run(name, layout, scope, Date.now(), row.id)
   res.json(dashboardRow(db.prepare('SELECT * FROM dashboards WHERE id = ?').get(row.id)))
+}))
+
+/* ---------------------------------------------------------- saved filters */
+
+router.get('/filters', wrap(async (req, res) => {
+  res.json({ filters: getConfig('saved_filters', []) })
+}))
+
+/** Upsert by name: saving under an existing name replaces it. */
+router.post('/filters', wrap(async (req, res) => {
+  const name = String(req.body?.name || '').trim()
+  if (!name) return res.status(400).json({ error: 'A filter needs a name' })
+  const scope = req.body?.scope
+  if (!scope || typeof scope !== 'object') return res.status(400).json({ error: 'A filter needs a scope' })
+  const filters = getConfig('saved_filters', []).filter((f) => f.name !== name)
+  filters.push({ name, scope })
+  filters.sort((a, b) => a.name.localeCompare(b.name))
+  setConfig('saved_filters', filters)
+  res.json({ filters })
+}))
+
+router.delete('/filters/:name', wrap(async (req, res) => {
+  const filters = getConfig('saved_filters', []).filter((f) => f.name !== req.params.name)
+  setConfig('saved_filters', filters)
+  res.json({ filters })
 }))
 
 router.delete('/dashboards/:id', wrap(async (req, res) => {
@@ -489,6 +516,23 @@ function setInitiativeTeams(initiativeId, teamIds) {
   db.prepare('DELETE FROM initiative_teams WHERE initiative_id = ?').run(initiativeId)
   const insert = db.prepare('INSERT OR IGNORE INTO initiative_teams (initiative_id, team_id) VALUES (?, ?)')
   for (const id of teamIds || []) insert.run(initiativeId, Number(id))
+}
+
+/** Tracked epic fields (report dates, HL estimation) for a linked issue. */
+function trackedFieldsFor(jiraKey) {
+  if (!jiraKey) return null
+  const cloudId = activeCloudId()
+  if (!cloudId) return null
+  const row = db
+    .prepare('SELECT custom_fields FROM issues WHERE cloud_id = ? AND key = ?')
+    .get(cloudId, jiraKey)
+  if (!row?.custom_fields) return null
+  try {
+    const parsed = JSON.parse(row.custom_fields)
+    return Object.keys(parsed).length ? parsed : null
+  } catch {
+    return null
+  }
 }
 
 /** Live rollup for a Jira-linked workstream, from the synced local data. */
@@ -537,6 +581,7 @@ function reportPayload(report) {
           ? { rag: prev.rag || 'on-track', targetDate: prev.target_date || null, updateText: prev.update_text || '' }
           : null,
         progress: progressFor(effectiveKey),
+        fields: trackedFieldsFor(effectiveKey),
       }
     })
   return { id: report.id, week: report.week, prevWeek: prevReport?.week ?? null, entries }
@@ -682,6 +727,17 @@ router.post('/status-reports/:id/entries', wrap(async (req, res) => {
     'INSERT OR IGNORE INTO report_entries (report_id, team_id, initiative_id, jira_key, sort_order) VALUES (?, ?, ?, ?, ?)'
   ).run(report.id, teamId, initiativeId, jiraKey, max + 1)
   res.json(reportPayload(report))
+}))
+
+/** Persist the workstream order for a week: sort_order = index of the group. */
+router.put('/status-reports/:id/order', wrap(async (req, res) => {
+  const ids = req.body?.initiativeIds
+  if (!Array.isArray(ids)) return res.status(400).json({ error: 'initiativeIds must be an array' })
+  const stmt = db.prepare('UPDATE report_entries SET sort_order = ? WHERE report_id = ? AND initiative_id = ?')
+  db.transaction(() => {
+    ids.forEach((iid, idx) => stmt.run(idx, req.params.id, Number(iid)))
+  })()
+  res.json({ ok: true })
 }))
 
 router.put('/status-entries/:id', wrap(async (req, res) => {

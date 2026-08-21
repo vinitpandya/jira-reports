@@ -32,6 +32,32 @@ const RAG_CSS: Record<Rag, string> = {
   paused: 'var(--text-muted)',
 }
 
+/** The epic fields that can be surfaced on entries, in display order. */
+const FIELD_CHOICES = [
+  'Estimation Need Date',
+  'Requested Due Date',
+  'Start Date',
+  'Due Date',
+  'Staging Date',
+  'Epic HL Estimation',
+]
+const FIELDS_KEY = 'jira-reports.status.fields'
+
+const loadShownFields = (): string[] => {
+  try {
+    const raw = localStorage.getItem(FIELDS_KEY)
+    if (raw) return (JSON.parse(raw) as string[]).filter((f) => FIELD_CHOICES.includes(f))
+  } catch {
+    /* ignore */
+  }
+  return ['Due Date', 'Epic HL Estimation']
+}
+
+const fieldValue = (v: string | number): string => {
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) return shortDate(v.slice(0, 10))
+  return String(v)
+}
+
 const currentMonday = () => {
   const d = new Date()
   const day = (d.getUTCDay() + 6) % 7
@@ -60,6 +86,17 @@ export function StatusReportPage() {
   const [editingEpicEntry, setEditingEpicEntry] = useState<StatusEntry | null>(null)
   const [editingGroup, setEditingGroup] = useState<WorkstreamGroup | null>(null)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [shownFields, setShownFields] = useState<string[]>(loadShownFields)
+  const [fieldsMenu, setFieldsMenu] = useState(false)
+  const [armedDrag, setArmedDrag] = useState<number | null>(null)
+
+  const toggleField = (name: string) => {
+    setShownFields((list) => {
+      const next = list.includes(name) ? list.filter((f) => f !== name) : [...list, name]
+      localStorage.setItem(FIELDS_KEY, JSON.stringify(next))
+      return next
+    })
+  }
 
   const toggleCollapsed = (key: string) =>
     setCollapsed((s) => {
@@ -229,6 +266,24 @@ export function StatusReportPage() {
     }
   }
 
+  /** Drag one group onto another: reorder locally, persist the new order. */
+  const reorderGroups = (fromId: number, toId: number) => {
+    if (!report || fromId === toId) return
+    const order = groupByWorkstream(report.entries).map((g) => g.initiativeId)
+    const from = order.indexOf(fromId)
+    const to = order.indexOf(toId)
+    if (from < 0 || to < 0) return
+    order.splice(to, 0, ...order.splice(from, 1))
+    const rank = new Map(order.map((id, i) => [id, i]))
+    setReport({
+      ...report,
+      entries: [...report.entries].sort(
+        (a, b) => (rank.get(a.initiativeId) ?? 999) - (rank.get(b.initiativeId) ?? 999)
+      ),
+    })
+    api.put(`/status-reports/${report.id}/order`, { initiativeIds: order }).catch(fail)
+  }
+
   const removeGroup = async (g: WorkstreamGroup) => {
     if (!report) return
     const n = g.entries.length
@@ -388,6 +443,28 @@ export function StatusReportPage() {
                   + Add workstream
                 </button>
               )}
+              <span style={{ position: 'relative' }}>
+                <button type="button" className="ghost" onClick={() => setFieldsMenu((v) => !v)}>
+                  Epic fields ▾
+                </button>
+                {fieldsMenu && (
+                  <div className="menu-pop">
+                    {FIELD_CHOICES.map((f) => (
+                      <label key={f} className="row" style={{ gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={shownFields.includes(f)}
+                          onChange={() => toggleField(f)}
+                        />
+                        {f}
+                      </label>
+                    ))}
+                    <p className="muted" style={{ fontSize: 11.5, margin: '4px 0 0', maxWidth: 200 }}>
+                      Shown on linked epics when the field is synced from Jira.
+                    </p>
+                  </div>
+                )}
+              </span>
               <div className="segmented" role="group" aria-label="Grouping">
                 <button
                   type="button"
@@ -431,7 +508,7 @@ export function StatusReportPage() {
           )}
 
           {view === 'workstream' && (
-            <div className="stack">
+            <div className="ws-masonry">
               {wsGroups.map((g) => {
                 // The general (no-team) entry carries the group-level status;
                 // its controls live on the header. Team rows keep their own.
@@ -441,9 +518,33 @@ export function StatusReportPage() {
                 const addable = activeTeams.filter((t) => !inGroup.has(t.id))
                 const slip = general ? dateSlip(general) : null
                 const isCollapsed = collapsed.has(`ws${g.initiativeId}`)
+                const groupFields = general?.fields
+                  ? shownFields.filter((f) => general.fields![f] !== undefined)
+                  : []
                 return (
-                  <section key={g.initiativeId} className="card" style={{ padding: '12px 14px' }}>
+                  <section
+                    key={g.initiativeId}
+                    className="card ws-card"
+                    style={{ padding: '12px 14px' }}
+                    draggable={armedDrag === g.initiativeId}
+                    onDragStart={(ev) => ev.dataTransfer.setData('text/ws', String(g.initiativeId))}
+                    onDragEnd={() => setArmedDrag(null)}
+                    onDragOver={(ev) => ev.preventDefault()}
+                    onDrop={(ev) => {
+                      ev.preventDefault()
+                      const from = Number(ev.dataTransfer.getData('text/ws'))
+                      if (from) reorderGroups(from, g.initiativeId)
+                    }}
+                  >
                     <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span
+                        className="drag-handle"
+                        title="Drag to reorder"
+                        onMouseDown={() => setArmedDrag(g.initiativeId)}
+                        onMouseUp={() => setArmedDrag(null)}
+                      >
+                        ⠿
+                      </span>
                       <button
                         type="button"
                         className="ghost widget-btn"
@@ -554,6 +655,13 @@ export function StatusReportPage() {
 
                     {!isCollapsed && (
                       <>
+                        {groupFields.length > 0 && (
+                          <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                            {groupFields
+                              .map((f) => `${f}: ${fieldValue(general!.fields![f])}`)
+                              .join(' · ')}
+                          </div>
+                        )}
                         {general && (
                           <>
                             <textarea
@@ -584,6 +692,7 @@ export function StatusReportPage() {
                               nested
                               teamBadge={{ name: teamName(e.teamId), color: teamColor(e.teamId) }}
                               siteUrl={siteUrl}
+                              shownFields={shownFields}
                               onPatch={(patch) => patchEntry(e.id, patch)}
                               onRemove={() => void removeEntry(e.id)}
                               onEdit={() => setEditingEpicEntry(e)}
@@ -640,6 +749,7 @@ export function StatusReportPage() {
                         key={e.id}
                         entry={e}
                         siteUrl={siteUrl}
+                        shownFields={shownFields}
                         onPatch={(patch) => patchEntry(e.id, patch)}
                         onRemove={() => void removeEntry(e.id)}
                         onEdit={() => setEditingEntry(e)}
@@ -746,6 +856,7 @@ function EntryCard({
   siteUrl,
   nested = false,
   teamBadge,
+  shownFields = [],
   onPatch,
   onRemove,
   onEdit,
@@ -755,11 +866,15 @@ function EntryCard({
   /** Inside a workstream group: no card chrome, team badge instead of title. */
   nested?: boolean
   teamBadge?: { name: string; color: string }
+  shownFields?: string[]
   onPatch: (patch: Partial<Pick<StatusEntry, 'rag' | 'updateText' | 'targetDate'>>) => void
   onRemove: () => void
   onEdit: () => void
 }) {
   const slip = dateSlip(entry)
+  const fieldLine = entry.fields
+    ? shownFields.filter((f) => entry.fields![f] !== undefined)
+    : []
   return (
     <div className={nested ? 'status-entry nested' : 'card status-entry'}>
       <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -832,6 +947,12 @@ function EntryCard({
           </button>
         </span>
       </div>
+
+      {fieldLine.length > 0 && (
+        <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+          {fieldLine.map((f) => `${f}: ${fieldValue(entry.fields![f])}`).join(' · ')}
+        </div>
+      )}
 
       {(slip || entry.progress) && (
         <div className="row" style={{ gap: 14, marginTop: 6, alignItems: 'center' }}>
@@ -1560,7 +1681,8 @@ function groupByWorkstream(entries: StatusEntry[]): WorkstreamGroup[] {
     }
     map.get(e.initiativeId)!.entries.push(e)
   }
-  return [...map.values()].sort((a, b) => a.title.localeCompare(b.title))
+  // Entries arrive sorted by sort_order, so first appearance is the saved order.
+  return [...map.values()]
 }
 
 function entrySummaryBits(e: StatusEntry): string[] {

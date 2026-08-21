@@ -1,9 +1,12 @@
-import { useState } from 'react'
-import { useReport, useScope } from '../lib/scope'
+import { useEffect, useRef, useState } from 'react'
+import { DEFAULT_SCOPE, useReport, useScope, type Scope } from '../lib/scope'
 import type { IssueRow } from '../lib/api'
+import { ScopeBar } from '../components/ScopeBar'
 import { Card, Banner, Empty } from '../components/ui'
 import { compact, full, longDate, pct } from '../lib/format'
 import { NoData } from './Overview'
+
+const EXPLORER_SCOPE_KEY = 'jira-reports.scope.explorer'
 
 const CATEGORY_LABEL: Record<string, string> = {
   new: 'To do',
@@ -12,9 +15,27 @@ const CATEGORY_LABEL: Record<string, string> = {
 }
 
 export function Explorer() {
-  const { scope, setScope, catalog, sync, siteUrl } = useScope()
+  const { scope, setScope, replaceScope, catalog, sync, siteUrl } = useScope()
   const [filter, setFilter] = useState('')
   const [category, setCategory] = useState('all')
+  const scopeReady = useRef(false)
+
+  // Explorer keeps its own filter row, persisted locally.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(EXPLORER_SCOPE_KEY)
+      replaceScope(raw ? { ...DEFAULT_SCOPE, ...(JSON.parse(raw) as Partial<Scope>) } : DEFAULT_SCOPE)
+    } catch {
+      replaceScope(DEFAULT_SCOPE)
+    }
+    requestAnimationFrame(() => {
+      scopeReady.current = true
+    })
+  }, [replaceScope])
+
+  useEffect(() => {
+    if (scopeReady.current) localStorage.setItem(EXPLORER_SCOPE_KEY, JSON.stringify(scope))
+  }, [scope])
 
   const { data, loading, error } = useReport<{ total: number; issues: IssueRow[] }>('/reports/issues', {
     limit: 2000,
@@ -36,6 +57,7 @@ export function Explorer() {
 
   return (
     <div className="page">
+      <ScopeBar />
       <div className="page-head">
         <div>
           <h1>Explorer</h1>

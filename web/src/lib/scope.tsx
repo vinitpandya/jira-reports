@@ -21,7 +21,7 @@ export type Scope = {
   range: RangePreset
 }
 
-const DEFAULT_SCOPE: Scope = { projects: [], roots: [], followLinks: false, metric: 'count', range: '90d' }
+export const DEFAULT_SCOPE: Scope = { projects: [], roots: [], followLinks: false, metric: 'count', range: '90d' }
 
 const STORAGE_KEY = 'jira-reports.scope'
 
@@ -44,6 +44,8 @@ export function rangeStart(range: RangePreset): string | undefined {
 type Ctx = {
   scope: Scope
   setScope: (patch: Partial<Scope>) => void
+  /** Swap the whole scope at once — used when a page loads its own filter. */
+  replaceScope: (next: Scope) => void
   resetScope: () => void
   /** Params every report endpoint accepts. */
   params: Record<string, string>
@@ -76,6 +78,10 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
 
   const setScope = useCallback((patch: Partial<Scope>) => {
     setScopeState((s) => ({ ...s, ...patch }))
+  }, [])
+
+  const replaceScope = useCallback((next: Scope) => {
+    setScopeState({ ...DEFAULT_SCOPE, ...next })
   }, [])
 
   const resetScope = useCallback(() => setScopeState(DEFAULT_SCOPE), [])
@@ -159,6 +165,7 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
   const value: Ctx = {
     scope,
     setScope,
+    replaceScope,
     resetScope,
     params,
     revision,

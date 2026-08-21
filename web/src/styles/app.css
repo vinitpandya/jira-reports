@@ -755,6 +755,50 @@ table.data td.wide {
 .status-entry {
   padding: 12px 14px;
 }
+
+/* Workstream cards flow into columns so text areas stay a readable width. */
+.ws-masonry {
+  columns: 3;
+  column-gap: 14px;
+}
+@media (max-width: 1500px) {
+  .ws-masonry { columns: 2; }
+}
+@media (max-width: 980px) {
+  .ws-masonry { columns: 1; }
+}
+.ws-card {
+  break-inside: avoid;
+  margin-bottom: 14px;
+  display: block;
+}
+
+.drag-handle {
+  cursor: grab;
+  color: var(--text-muted);
+  font-size: 13px;
+  user-select: none;
+  padding: 0 2px;
+}
+.drag-handle:hover {
+  color: var(--text-primary);
+}
+
+.menu-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  white-space: nowrap;
+}
 .status-entry.nested {
   border-top: 1px solid var(--border);
   padding: 10px 0 4px;
@@ -855,6 +899,16 @@ select.rag-paused { color: var(--text-muted); }
   max-height: 84vh;
   overflow: auto;
   padding: 18px 20px 20px;
+}
+
+/* Fullscreen widget flavour of the modal. */
+.modal.fs {
+  width: 96vw;
+  max-width: 96vw;
+  height: 92vh;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .type-grid {

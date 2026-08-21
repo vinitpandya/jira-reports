@@ -49,6 +49,16 @@ const STORY_POINT_NAMES = ['story points', 'story point estimate', 'story point'
 const EPIC_LINK_NAMES = ['epic link']
 const PARENT_LINK_NAMES = ['parent link']
 
+/** Named fields captured verbatim into issues.custom_fields for reporting. */
+export const TRACKED_FIELDS = [
+  { label: 'Estimation Need Date', names: ['estimation need date'] },
+  { label: 'Requested Due Date', names: ['requested due date'] },
+  { label: 'Start Date', names: ['start date', 'start date[date]'] },
+  { label: 'Due Date', names: ['due date', 'duedate'] },
+  { label: 'Staging Date', names: ['staging date'] },
+  { label: 'Epic HL Estimation', names: ['epic hl estimation'] },
+]
+
 function discoverFieldIds(cloudId) {
   const rows = db
     .prepare('SELECT id, name FROM fields WHERE cloud_id = ?')
@@ -56,10 +66,17 @@ function discoverFieldIds(cloudId) {
   const byName = (names) =>
     rows.filter((r) => names.includes((r.name || '').trim().toLowerCase())).map((r) => r.id)
 
+  const tracked = []
+  for (const t of TRACKED_FIELDS) {
+    const id = byName(t.names)[0]
+    if (id) tracked.push({ id, label: t.label })
+  }
+
   return {
     storyPoints: byName(STORY_POINT_NAMES),
     epicLink: byName(EPIC_LINK_NAMES)[0] || null,
     parentLink: byName(PARENT_LINK_NAMES)[0] || null,
+    tracked,
   }
 }
 
@@ -158,14 +175,14 @@ const upsertIssue = db.prepare(`
     parent_id, parent_key, assignee_id, assignee_name, assignee_avatar,
     reporter_id, reporter_name, summary, labels, components,
     story_points, time_spent, original_estimate,
-    created, updated, resolved, status_changed
+    created, updated, resolved, status_changed, custom_fields
   ) VALUES (
     @cloud_id, @id, @key, @project_id, @project_key, @type_id, @type_name, @hierarchy_level,
     @status_id, @status_name, @status_category, @resolution, @priority,
     @parent_id, @parent_key, @assignee_id, @assignee_name, @assignee_avatar,
     @reporter_id, @reporter_name, @summary, @labels, @components,
     @story_points, @time_spent, @original_estimate,
-    @created, @updated, @resolved, @status_changed
+    @created, @updated, @resolved, @status_changed, @custom_fields
   )
   ON CONFLICT(cloud_id, id) DO UPDATE SET
     key = excluded.key, project_id = excluded.project_id, project_key = excluded.project_key,
@@ -181,7 +198,7 @@ const upsertIssue = db.prepare(`
     story_points = excluded.story_points, time_spent = excluded.time_spent,
     original_estimate = excluded.original_estimate, created = excluded.created,
     updated = excluded.updated, resolved = excluded.resolved,
-    status_changed = excluded.status_changed
+    status_changed = excluded.status_changed, custom_fields = excluded.custom_fields
 `)
 
 const upsertLink = db.prepare(
@@ -209,6 +226,15 @@ function storeIssuePage(cloudId, issues, fieldIds) {
           points = v
           break
         }
+      }
+
+      // Tracked extras (report dates, HL estimation) keyed by canonical label.
+      const extras = {}
+      for (const t of fieldIds.tracked || []) {
+        const v = f[t.id]
+        if (v === null || v === undefined || v === '') continue
+        extras[t.label] =
+          typeof v === 'object' ? v.value ?? v.name ?? v.displayName ?? null : v
       }
 
       const epicLinkKey = fieldIds.epicLink ? f[fieldIds.epicLink] : null
@@ -247,6 +273,7 @@ function storeIssuePage(cloudId, issues, fieldIds) {
         updated: f.updated || null,
         resolved: f.resolutiondate || null,
         status_changed: f.statuscategorychangedate || null,
+        custom_fields: Object.keys(extras).length ? JSON.stringify(extras) : null,
       })
 
       for (const link of f.issuelinks || []) {
@@ -273,6 +300,7 @@ function issueFieldList(fieldIds) {
   const extra = [...fieldIds.storyPoints]
   if (fieldIds.epicLink) extra.push(fieldIds.epicLink)
   if (fieldIds.parentLink) extra.push(fieldIds.parentLink)
+  for (const t of fieldIds.tracked || []) extra.push(t.id)
   return [...base, ...extra]
 }
 

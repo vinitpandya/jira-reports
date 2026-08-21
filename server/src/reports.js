@@ -288,6 +288,16 @@ export function cumulativeFlow({
     series.push(point)
   }
 
+  // A window that starts mid-history begins with pre-existing totals; rebase
+  // each band to zero at the window start so the chart shows in-window flow.
+  if (from && series.length) {
+    const baseline = {}
+    for (const k of order) baseline[k] = series[0][k] || 0
+    for (const p of series) {
+      for (const k of order) p[k] = Math.max(0, Number((p[k] - baseline[k]).toFixed(3)))
+    }
+  }
+
   // Drop leading all-zero days so the chart starts where work starts.
   let firstNonEmpty = series.findIndex((p) => order.some((k) => p[k] > 0))
   if (firstNonEmpty > 0) series.splice(0, firstNonEmpty)
@@ -717,19 +727,16 @@ export function timeseries({
   const weeks = new Map()
   for (let t = start; t <= end; t += WEEK) weeks.set(t, zero())
 
-  const baseline = zero()
+  // Events before the window are dropped entirely so cumulative series start
+  // at zero at the window's edge rather than carrying in pre-existing totals.
   for (const e of events) {
-    const k = keyFor(e.name)
     const wk = startOfWeek(e.ts)
-    if (wk < start) {
-      if (accumulate) baseline[k] += e.w
-      continue
-    }
+    if (wk < start) continue
     const bucket = weeks.get(wk)
-    if (bucket) bucket[k] += e.w
+    if (bucket) bucket[keyFor(e.name)] += e.w
   }
 
-  const running = { ...baseline }
+  const running = zero()
   const series = [...weeks.entries()].map(([t, bucket]) => {
     const point = { date: dayKey(t) }
     for (const k of keys) {

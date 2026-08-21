@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { ScopeProvider, useScope } from './lib/scope'
 import { DashboardsProvider, useDashboards } from './lib/dashboards'
-import { ScopeBar } from './components/ScopeBar'
 import { Modal } from './components/ui'
 import { DashboardPage, DashboardsIndex } from './pages/Dashboards'
 import { Explorer } from './pages/Explorer'
@@ -20,9 +19,6 @@ const SYSTEM_NAV: { slug: string; icon: () => JSX.Element }[] = [
 ]
 
 function Shell() {
-  const { pathname } = useLocation()
-  // The scope filter row only makes sense on report pages.
-  const hideScope = pathname.startsWith('/settings') || pathname.startsWith('/status')
 
   return (
     <div className="shell">
@@ -59,7 +55,6 @@ function Shell() {
       </aside>
 
       <main className="main">
-        {!hideScope && <ScopeBar />}
         <Routes>
           <Route path="/" element={<SlugRedirect slug="overview" />} />
           <Route path="/overview" element={<SlugRedirect slug="overview" />} />

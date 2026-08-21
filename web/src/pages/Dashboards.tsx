@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { api, type Dashboard, type WidgetConfig } from '../lib/api'
-import { useScope } from '../lib/scope'
+import { DEFAULT_SCOPE, useScope, type Scope } from '../lib/scope'
 import { ACTIVE_KEY, newWidgetId, useDashboards } from '../lib/dashboards'
+import { ScopeBar } from '../components/ScopeBar'
 import { Banner, Empty, Modal } from '../components/ui'
 import { DashGrid, compactAll, nextFreeY, type LayoutItem } from '../dashboard/Grid'
 import {
@@ -50,7 +52,7 @@ function NoPagesYet() {
 export function DashboardPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { catalog, sync } = useScope()
+  const { catalog, sync, scope, replaceScope } = useScope()
   const { pages, rename, remove, refresh } = useDashboards()
   const [active, setActive] = useState<Dashboard | null>(null)
   const [missing, setMissing] = useState(false)
@@ -58,13 +60,19 @@ export function DashboardPage() {
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<WidgetConfig | null>(null)
   const [renaming, setRenaming] = useState(false)
+  const [fullscreenId, setFullscreenId] = useState<string | null>(null)
   const saveTimer = useRef<number>()
   const scrollTo = useRef<string | null>(null)
+  const scopeReady = useRef(false)
+  const scopeSaveTimer = useRef<number>()
+  const lastSavedScope = useRef('')
 
   useEffect(() => {
     let cancelled = false
     setMissing(false)
     setActive(null)
+    setFullscreenId(null)
+    scopeReady.current = false
     if (!id) return
     api
       .get<Dashboard>(`/dashboards/${id}`)
@@ -72,6 +80,13 @@ export function DashboardPage() {
         if (cancelled) return
         setActive(d)
         localStorage.setItem(ACTIVE_KEY, String(d.id))
+        // Each page owns its filter row: load this page's saved scope.
+        const pageScope = { ...DEFAULT_SCOPE, ...((d.scope ?? {}) as Partial<Scope>) }
+        lastSavedScope.current = JSON.stringify(pageScope)
+        replaceScope(pageScope)
+        requestAnimationFrame(() => {
+          if (!cancelled) scopeReady.current = true
+        })
       })
       .catch(() => {
         if (!cancelled) setMissing(true)
@@ -79,7 +94,22 @@ export function DashboardPage() {
     return () => {
       cancelled = true
     }
-  }, [id])
+  }, [id, replaceScope])
+
+  // Persist filter edits back onto the page (debounced, skipping the load itself).
+  useEffect(() => {
+    if (!active || !scopeReady.current) return
+    const serialized = JSON.stringify(scope)
+    if (serialized === lastSavedScope.current) return
+    window.clearTimeout(scopeSaveTimer.current)
+    scopeSaveTimer.current = window.setTimeout(() => {
+      lastSavedScope.current = serialized
+      api.put(`/dashboards/${active.id}`, { scope }).catch((err) => {
+        setError(String((err as Error).message))
+      })
+    }, 600)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope])
 
   const persist = useCallback((dashboard: Dashboard) => {
     window.clearTimeout(saveTimer.current)
@@ -223,12 +253,13 @@ export function DashboardPage() {
 
   return (
     <div className="page">
+      <ScopeBar />
       <div className="page-head">
         <div>
           <h1>{active.name}</h1>
           <p>
             Your own arrangement of widgets. Drag a card by its header, resize from the corner —
-            everything is saved and scoped by the filter row above.
+            everything is saved, and the filter row above belongs to this page.
           </p>
         </div>
         <div className="row">
@@ -282,6 +313,15 @@ export function DashboardPage() {
                     <WidgetQuickBar widget={widget} onPatch={(p) => patchWidget(widget.i, p)} />
                   )}
                   <span className="row" style={{ gap: 2, flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      className="ghost widget-btn"
+                      aria-label="Expand widget to full screen"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={() => setFullscreenId(widget.i)}
+                    >
+                      ⛶
+                    </button>
                     <button
                       type="button"
                       className="ghost widget-btn"
@@ -363,7 +403,47 @@ export function DashboardPage() {
           <RenameForm initial={active.name} onSubmit={(name) => void renamePage(name)} />
         </Modal>
       )}
+
+      {fullscreenId &&
+        (() => {
+          const w = active.layout.find((l) => l.i === fullscreenId)
+          return w ? <FullscreenWidget widget={w} onClose={() => setFullscreenId(null)} /> : null
+        })()}
     </div>
+  )
+}
+
+/**
+ * A widget blown up to (almost) the whole viewport. The body is re-rendered
+ * with a synthetic grid height sized to the screen, so charts scale up.
+ */
+function FullscreenWidget({ widget, onClose }: { widget: WidgetConfig; onClose: () => void }) {
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    document.addEventListener('keydown', esc)
+    return () => document.removeEventListener('keydown', esc)
+  }, [onClose])
+
+  // Invert bodyHeight(): pick h so the body fills the overlay.
+  const overlayBody = window.innerHeight * 0.92 - 96
+  const bigH = Math.max(4, Math.round((overlayBody + 60 + 12) / 96))
+  const fsWidget: WidgetConfig = { ...widget, w: 12, h: bigH }
+
+  return createPortal(
+    <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal fs" role="dialog" aria-label={widget.title || defaultTitle(widget)}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10, flexShrink: 0 }}>
+          <h2 style={{ margin: 0, fontSize: 15 }}>{widget.title || defaultTitle(widget)}</h2>
+          <button type="button" className="ghost" onClick={onClose}>
+            Exit full screen ✕
+          </button>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          <WidgetBody widget={fsWidget} />
+        </div>
+      </div>
+    </div>,
+    document.body
   )
 }
 

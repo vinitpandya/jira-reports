@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
-import { api, type Root } from '../lib/api'
-import { useScope } from '../lib/scope'
+import { useCallback, useEffect, useState } from 'react'
+import { api, type Root, type SavedFilter } from '../lib/api'
+import { useScope, type Scope } from '../lib/scope'
 import { Picker, Select, type Option } from './Picker'
 import { relative } from '../lib/format'
 
@@ -12,15 +12,51 @@ const LEVELS = [
 ]
 
 /**
- * The single filter row. It sits above every chart on every page and scopes all
- * of them, so the numbers on a page always agree with each other.
+ * The filter row. Each page renders its own; the values scope every chart on
+ * that page. Named filters are saved server-side and shared between pages.
  */
 export function ScopeBar() {
-  const { scope, setScope, catalog, sync, startSync, cancelSync } = useScope()
+  const { scope, setScope, replaceScope, catalog, sync, startSync, cancelSync } = useScope()
   const [level, setLevel] = useState('2')
   const [roots, setRoots] = useState<Root[]>([])
   const [rootQuery, setRootQuery] = useState('')
   const [loadingRoots, setLoadingRoots] = useState(false)
+  const [filters, setFilters] = useState<SavedFilter[]>([])
+  const [activeFilter, setActiveFilter] = useState('')
+
+  const loadFilters = useCallback(
+    () =>
+      api
+        .get<{ filters: SavedFilter[] }>('/filters')
+        .then((d) => setFilters(d.filters))
+        .catch(() => undefined),
+    []
+  )
+  useEffect(() => {
+    void loadFilters()
+  }, [loadFilters])
+
+  const applyFilter = (name: string) => {
+    setActiveFilter(name)
+    const f = filters.find((x) => x.name === name)
+    if (f) replaceScope(f.scope as Scope)
+  }
+
+  const saveFilter = async () => {
+    const name = window.prompt('Save current filter as…', activeFilter || '')?.trim()
+    if (!name) return
+    const d = await api.post<{ filters: SavedFilter[] }>('/filters', { name, scope })
+    setFilters(d.filters)
+    setActiveFilter(name)
+  }
+
+  const deleteFilter = async () => {
+    if (!activeFilter) return
+    if (!window.confirm(`Delete the saved filter "${activeFilter}"?`)) return
+    const d = await api.del<{ filters: SavedFilter[] }>(`/filters/${encodeURIComponent(activeFilter)}`)
+    setFilters(d.filters)
+    setActiveFilter('')
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -104,6 +140,39 @@ export function ScopeBar() {
         <option value="365d">Last year</option>
         <option value="all">All time</option>
       </Select>
+
+      <div className="field">
+        <label>Saved filters</label>
+        <div className="row" style={{ gap: 4 }}>
+          <select
+            value={activeFilter}
+            onChange={(e) => applyFilter(e.target.value)}
+            aria-label="Load a saved filter"
+            style={{ maxWidth: 150 }}
+          >
+            <option value="">Load…</option>
+            {filters.map((f) => (
+              <option key={f.name} value={f.name}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+          <button type="button" className="ghost" title="Save current filter" onClick={() => void saveFilter()}>
+            Save
+          </button>
+          {activeFilter && (
+            <button
+              type="button"
+              className="ghost danger"
+              title="Delete this saved filter"
+              aria-label="Delete this saved filter"
+              onClick={() => void deleteFilter()}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
 
       <div className="spacer" />
 
