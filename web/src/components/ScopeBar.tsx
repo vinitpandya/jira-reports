@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, type Root, type SavedFilter } from '../lib/api'
 import { useScope, type Scope } from '../lib/scope'
 import { Picker, Select, type Option } from './Picker'
-import { relative } from '../lib/format'
 
 const LEVELS = [
   { value: '2', label: 'Initiatives' },
@@ -16,7 +15,7 @@ const LEVELS = [
  * that page. Named filters are saved server-side and shared between pages.
  */
 export function ScopeBar() {
-  const { scope, setScope, replaceScope, catalog, sync, startSync, cancelSync } = useScope()
+  const { scope, setScope, replaceScope, catalog } = useScope()
   const [level, setLevel] = useState('2')
   const [roots, setRoots] = useState<Root[]>([])
   const [rootQuery, setRootQuery] = useState('')
@@ -82,8 +81,6 @@ export function ScopeBar() {
     label: `${r.key} ${r.summary}`,
     sub: r.child_count ? `${r.child_count} children` : r.type_name,
   }))
-
-  const running = sync?.running ?? false
 
   return (
     <div className="scopebar">
@@ -174,48 +171,6 @@ export function ScopeBar() {
         </div>
       </div>
 
-      <div className="spacer" />
-
-      <div className="field">
-        <label>Local data</label>
-        <div className="row" style={{ gap: 8 }}>
-          {running ? (
-            <>
-              <span className="pill">
-                <span className="spinner" />
-                {sync?.message ?? 'Syncing…'}
-              </span>
-              <button type="button" className="ghost" onClick={() => void cancelSync()}>
-                Stop
-              </button>
-            </>
-          ) : (
-            <>
-              <span className="muted" style={{ fontSize: 12 }}>
-                {sync?.last?.finishedAt ? `Synced ${relative(sync.last.finishedAt)}` : 'Never synced'}
-              </span>
-              <button type="button" className="primary" onClick={() => void startSync('incremental')}>
-                <RefreshIcon />
-                Refresh
-              </button>
-            </>
-          )}
-        </div>
-      </div>
     </div>
-  )
-}
-
-function RefreshIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path
-        d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2v3.2h-3.2"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   )
 }

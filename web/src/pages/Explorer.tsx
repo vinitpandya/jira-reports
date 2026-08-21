@@ -57,7 +57,6 @@ export function Explorer() {
 
   return (
     <div className="page">
-      <ScopeBar />
       <div className="page-head">
         <div>
           <h1>Explorer</h1>
@@ -67,6 +66,8 @@ export function Explorer() {
           </p>
         </div>
       </div>
+
+      <ScopeBar />
 
       {error && <Banner kind="error" title="Could not list issues">{error}</Banner>}
 

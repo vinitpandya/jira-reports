@@ -160,17 +160,17 @@ a:hover {
 
 /* ------------------------------------------------------------ filter row */
 
+/* An in-page panel sitting under the page title. */
 .scopebar {
-  position: sticky;
-  top: 0;
-  z-index: 20;
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 10px;
-  padding: 12px 28px;
-  background: var(--surface-1);
-  border-bottom: 1px solid var(--border);
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 18px;
 }
 
 .field {
@@ -982,8 +982,7 @@ select.rag-paused { color: var(--text-muted); }
   .sidebar-foot {
     margin-top: 0;
   }
-  .page,
-  .scopebar {
+  .page {
     padding-left: 16px;
     padding-right: 16px;
   }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { ScopeProvider, useScope } from './lib/scope'
 import { DashboardsProvider, useDashboards } from './lib/dashboards'
+import { relative } from './lib/format'
 import { Modal } from './components/ui'
 import { DashboardPage, DashboardsIndex } from './pages/Dashboards'
 import { Explorer } from './pages/Explorer'
@@ -49,6 +50,7 @@ function Shell() {
         </nav>
 
         <div className="sidebar-foot">
+          <SyncControl />
           <ThemeToggle />
           <DataFootnote />
         </div>
@@ -72,6 +74,57 @@ function Shell() {
         </Routes>
       </main>
     </div>
+  )
+}
+
+function SyncControl() {
+  const { sync, startSync, cancelSync } = useScope()
+  const running = sync?.running ?? false
+
+  if (running) {
+    return (
+      <div className="row" style={{ gap: 8, justifyContent: 'space-between' }}>
+        <span className="pill" style={{ minWidth: 0 }}>
+          <span className="spinner" />
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {sync?.message ?? 'Syncing…'}
+          </span>
+        </span>
+        <button type="button" className="ghost" style={{ flexShrink: 0 }} onClick={() => void cancelSync()}>
+          Stop
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="row" style={{ gap: 8, justifyContent: 'space-between' }}>
+      <span>{sync?.last?.finishedAt ? `Synced ${relative(sync.last.finishedAt)}` : 'Never synced'}</span>
+      <button
+        type="button"
+        className="ghost"
+        title="Refresh local data"
+        aria-label="Refresh local data"
+        style={{ flexShrink: 0, padding: '3px 8px' }}
+        onClick={() => void startSync('incremental')}
+      >
+        <RefreshIcon />
+      </button>
+    </div>
+  )
+}
+
+function RefreshIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2v3.2h-3.2"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   )
 }
 

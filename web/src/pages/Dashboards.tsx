@@ -253,13 +253,12 @@ export function DashboardPage() {
 
   return (
     <div className="page">
-      <ScopeBar />
       <div className="page-head">
         <div>
           <h1>{active.name}</h1>
           <p>
             Your own arrangement of widgets. Drag a card by its header, resize from the corner —
-            everything is saved, and the filter row above belongs to this page.
+            everything is saved, and the filter row below belongs to this page.
           </p>
         </div>
         <div className="row">
@@ -280,6 +279,8 @@ export function DashboardPage() {
           </button>
         </div>
       </div>
+
+      <ScopeBar />
 
       {error && (
         <Banner kind="error" title="Dashboard error" actions={<button type="button" className="ghost" onClick={() => setError(null)}>Dismiss</button>}>
