@@ -277,6 +277,36 @@ export type Dashboard = {
 
 export type DashboardMeta = { id: number; name: string; slug: string | null; updatedAt?: number }
 
+export type Team = { id: number; name: string; sortOrder: number; archived: boolean }
+
+export type StatusInitiative = {
+  id: number
+  title: string
+  jiraKey: string | null
+  archived: boolean
+  teamIds: number[]
+}
+
+export type Rag = 'on-track' | 'at-risk' | 'off-track' | 'done' | 'paused'
+
+export type StatusEntry = {
+  id: number
+  initiativeId: number
+  /** The team section this update lives in; null lands in "General". */
+  teamId: number | null
+  title: string
+  /** Effective epic link: the entry's own key, falling back to the workstream's. */
+  jiraKey: string | null
+  rag: Rag
+  updateText: string
+  targetDate: string | null
+  prev: { rag: Rag; targetDate: string | null; updateText: string } | null
+  progress: { pct: number; done: number; total: number } | null
+}
+
+export type StatusReport = { id: number; week: string; prevWeek: string | null; entries: StatusEntry[] }
+export type StatusReportMeta = { id: number; week: string; entryCount: number }
+
 export type IssueRow = {
   key: string
   summary: string

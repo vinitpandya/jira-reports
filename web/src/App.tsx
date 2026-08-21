@@ -6,6 +6,7 @@ import { ScopeBar } from './components/ScopeBar'
 import { Modal } from './components/ui'
 import { DashboardPage, DashboardsIndex } from './pages/Dashboards'
 import { Explorer } from './pages/Explorer'
+import { StatusReportPage } from './pages/StatusReport'
 import { Settings } from './pages/Settings'
 
 /** Fixed order and icons for the seeded built-in pages. */
@@ -20,7 +21,8 @@ const SYSTEM_NAV: { slug: string; icon: () => JSX.Element }[] = [
 
 function Shell() {
   const { pathname } = useLocation()
-  const isSettings = pathname.startsWith('/settings')
+  // The scope filter row only makes sense on report pages.
+  const hideScope = pathname.startsWith('/settings') || pathname.startsWith('/status')
 
   return (
     <div className="shell">
@@ -34,6 +36,13 @@ function Shell() {
           <div className="nav-group-label">Reports</div>
           <ReportsNav />
           <PagesNav />
+          <div className="nav-group-label" style={{ paddingTop: 14 }}>
+            Status
+          </div>
+          <NavLink to="/status" className={({ isActive }) => (isActive ? 'active' : '')}>
+            <IconReport />
+            Weekly report
+          </NavLink>
           <div className="nav-group-label" style={{ paddingTop: 14 }}>
             Data
           </div>
@@ -50,7 +59,7 @@ function Shell() {
       </aside>
 
       <main className="main">
-        {!isSettings && <ScopeBar />}
+        {!hideScope && <ScopeBar />}
         <Routes>
           <Route path="/" element={<SlugRedirect slug="overview" />} />
           <Route path="/overview" element={<SlugRedirect slug="overview" />} />
@@ -62,6 +71,7 @@ function Shell() {
           <Route path="/dashboards" element={<DashboardsIndex />} />
           <Route path="/d/:id" element={<DashboardPage />} />
           <Route path="/explorer" element={<Explorer />} />
+          <Route path="/status" element={<StatusReportPage />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<SlugRedirect slug="overview" />} />
         </Routes>
@@ -314,6 +324,14 @@ function IconClock() {
     <svg {...S}>
       <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
       <path d="M8 4.6V8l2.4 1.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+function IconReport() {
+  return (
+    <svg {...S}>
+      <rect x="2.6" y="1.8" width="10.8" height="12.4" rx="1.6" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M5.2 5h5.6M5.2 7.6h5.6M5.2 10.2h3.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   )
 }

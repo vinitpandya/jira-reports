@@ -168,6 +168,51 @@ CREATE TABLE IF NOT EXISTS dashboards (
   updated_at INTEGER
 );
 
+-- Weekly status reporting -------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS teams (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  sort_order INTEGER DEFAULT 0,
+  archived   INTEGER DEFAULT 0
+);
+
+-- A reportable workstream: optionally tied to a Jira issue (initiative/epic).
+CREATE TABLE IF NOT EXISTS initiatives (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  title      TEXT NOT NULL,
+  jira_key   TEXT,
+  archived   INTEGER DEFAULT 0,
+  created_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS initiative_teams (
+  initiative_id INTEGER NOT NULL,
+  team_id       INTEGER NOT NULL,
+  PRIMARY KEY (initiative_id, team_id)
+);
+
+CREATE TABLE IF NOT EXISTS status_reports (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  week       TEXT NOT NULL UNIQUE,   -- Monday, YYYY-MM-DD
+  created_at INTEGER
+);
+
+-- One update per (team, workstream) per week; target date and the team's own
+-- epic link are snapshotted here so week-over-week changes stay visible.
+CREATE TABLE IF NOT EXISTS report_entries (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  report_id     INTEGER NOT NULL,
+  team_id       INTEGER,                  -- NULL = general section
+  initiative_id INTEGER NOT NULL,
+  jira_key      TEXT,                     -- this team's epic for the workstream
+  rag           TEXT DEFAULT 'on-track',  -- on-track | at-risk | off-track | done | paused
+  update_text   TEXT DEFAULT '',
+  target_date   TEXT,
+  sort_order    INTEGER DEFAULT 0,
+  UNIQUE (report_id, team_id, initiative_id)
+);
+
 CREATE TABLE IF NOT EXISTS sync_runs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   cloud_id    TEXT,
@@ -183,6 +228,37 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 // No migration framework: guard column additions so existing databases catch up.
 if (!db.prepare(`PRAGMA table_info(dashboards)`).all().some((c) => c.name === 'slug')) {
   db.exec('ALTER TABLE dashboards ADD COLUMN slug TEXT')
+}
+
+// report_entries v1 had UNIQUE(report_id, initiative_id) and no team column;
+// SQLite cannot drop a constraint, so rebuild the table once.
+if (!db.prepare(`PRAGMA table_info(report_entries)`).all().some((c) => c.name === 'team_id')) {
+  db.exec(`
+    CREATE TABLE report_entries_v2 (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      report_id     INTEGER NOT NULL,
+      team_id       INTEGER,
+      initiative_id INTEGER NOT NULL,
+      jira_key      TEXT,
+      rag           TEXT DEFAULT 'on-track',
+      update_text   TEXT DEFAULT '',
+      target_date   TEXT,
+      sort_order    INTEGER DEFAULT 0,
+      UNIQUE (report_id, team_id, initiative_id)
+    );
+    INSERT INTO report_entries_v2 (id, report_id, initiative_id, rag, update_text, target_date, sort_order)
+      SELECT id, report_id, initiative_id, rag, update_text, target_date, sort_order FROM report_entries;
+    DROP TABLE report_entries;
+    ALTER TABLE report_entries_v2 RENAME TO report_entries;
+  `)
+}
+
+// Starter teams, inserted only into an empty table.
+if (!db.prepare('SELECT COUNT(*) AS n FROM teams').get().n) {
+  const insert = db.prepare('INSERT INTO teams (name, sort_order) VALUES (?, ?)')
+  ;['Trade Services', 'Prime', 'Portfolio', 'Ledger', 'Corporate Actions', 'Assets'].forEach(
+    (name, i) => insert.run(name, i)
+  )
 }
 
 export function getConfig(key, fallback = null) {

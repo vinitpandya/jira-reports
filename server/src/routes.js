@@ -464,6 +464,245 @@ router.post('/dashboards/:id/reset', wrap(async (req, res) => {
   res.json(dashboardRow(db.prepare('SELECT * FROM dashboards WHERE id = ?').get(row.id)))
 }))
 
+/* --------------------------------------------------------- weekly status */
+
+const mondayOf = (input) => {
+  const d = input ? new Date(`${input}T00:00:00Z`) : new Date()
+  if (Number.isNaN(+d)) return mondayOf()
+  const day = (d.getUTCDay() + 6) % 7 // Monday = 0
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day))
+    .toISOString()
+    .slice(0, 10)
+}
+
+const teamIdsFor = db.prepare('SELECT team_id FROM initiative_teams WHERE initiative_id = ?')
+
+const initiativeRow = (row) => ({
+  id: row.id,
+  title: row.title,
+  jiraKey: row.jira_key || null,
+  archived: !!row.archived,
+  teamIds: teamIdsFor.all(row.id).map((r) => r.team_id),
+})
+
+function setInitiativeTeams(initiativeId, teamIds) {
+  db.prepare('DELETE FROM initiative_teams WHERE initiative_id = ?').run(initiativeId)
+  const insert = db.prepare('INSERT OR IGNORE INTO initiative_teams (initiative_id, team_id) VALUES (?, ?)')
+  for (const id of teamIds || []) insert.run(initiativeId, Number(id))
+}
+
+/** Live rollup for a Jira-linked workstream, from the synced local data. */
+function progressFor(jiraKey) {
+  if (!jiraKey) return null
+  try {
+    const { issues } = resolveScope({ projects: [], roots: [jiraKey], types: [], descendants: true, followLinks: false })
+    if (!issues.length) return null
+    const s = summarise(issues, 'count')
+    return { pct: s.percentComplete, done: s.counts.done || 0, total: s.issues }
+  } catch {
+    return null
+  }
+}
+
+function reportPayload(report) {
+  const prevReport = db
+    .prepare('SELECT * FROM status_reports WHERE week < ? ORDER BY week DESC LIMIT 1')
+    .get(report.week)
+  const prevKey = (e) => `${e.initiative_id}:${e.team_id ?? 'none'}`
+  const prevEntries = new Map(
+    prevReport
+      ? db.prepare('SELECT * FROM report_entries WHERE report_id = ?').all(prevReport.id).map((e) => [prevKey(e), e])
+      : []
+  )
+  const entries = db
+    .prepare(
+      `SELECT e.*, i.title, i.jira_key AS initiative_key
+       FROM report_entries e JOIN initiatives i ON i.id = e.initiative_id
+       WHERE e.report_id = ? ORDER BY e.sort_order, i.title`
+    )
+    .all(report.id)
+    .map((e) => {
+      const prev = prevEntries.get(prevKey(e))
+      const effectiveKey = e.jira_key || e.initiative_key || null
+      return {
+        id: e.id,
+        initiativeId: e.initiative_id,
+        teamId: e.team_id ?? null,
+        title: e.title,
+        jiraKey: effectiveKey,
+        rag: e.rag || 'on-track',
+        updateText: e.update_text || '',
+        targetDate: e.target_date || null,
+        prev: prev
+          ? { rag: prev.rag || 'on-track', targetDate: prev.target_date || null, updateText: prev.update_text || '' }
+          : null,
+        progress: progressFor(effectiveKey),
+      }
+    })
+  return { id: report.id, week: report.week, prevWeek: prevReport?.week ?? null, entries }
+}
+
+/* teams */
+
+router.get('/teams', wrap(async (req, res) => {
+  res.json({
+    teams: db.prepare('SELECT * FROM teams ORDER BY sort_order, name').all().map((t) => ({
+      id: t.id,
+      name: t.name,
+      sortOrder: t.sort_order,
+      archived: !!t.archived,
+    })),
+  })
+}))
+
+router.post('/teams', wrap(async (req, res) => {
+  const name = String(req.body?.name || '').trim()
+  if (!name) return res.status(400).json({ error: 'A team needs a name' })
+  const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM teams').get().m
+  const info = db.prepare('INSERT INTO teams (name, sort_order) VALUES (?, ?)').run(name, max + 1)
+  res.json({ id: info.lastInsertRowid, name, sortOrder: max + 1, archived: false })
+}))
+
+router.put('/teams/:id', wrap(async (req, res) => {
+  const row = db.prepare('SELECT * FROM teams WHERE id = ?').get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'No such team' })
+  const name = req.body?.name !== undefined ? String(req.body.name).trim() || row.name : row.name
+  const archived = req.body?.archived !== undefined ? (req.body.archived ? 1 : 0) : row.archived
+  db.prepare('UPDATE teams SET name = ?, archived = ? WHERE id = ?').run(name, archived, row.id)
+  res.json({ id: row.id, name, sortOrder: row.sort_order, archived: !!archived })
+}))
+
+/* initiatives (reportable workstreams) */
+
+router.get('/initiatives', wrap(async (req, res) => {
+  res.json({
+    initiatives: db.prepare('SELECT * FROM initiatives ORDER BY title').all().map(initiativeRow),
+  })
+}))
+
+router.post('/initiatives', wrap(async (req, res) => {
+  const title = String(req.body?.title || '').trim()
+  if (!title) return res.status(400).json({ error: 'An initiative needs a title' })
+  const jiraKey = String(req.body?.jiraKey || '').trim() || null
+  const info = db
+    .prepare('INSERT INTO initiatives (title, jira_key, created_at) VALUES (?, ?, ?)')
+    .run(title, jiraKey, Date.now())
+  setInitiativeTeams(info.lastInsertRowid, req.body?.teamIds)
+  res.json(initiativeRow(db.prepare('SELECT * FROM initiatives WHERE id = ?').get(info.lastInsertRowid)))
+}))
+
+router.put('/initiatives/:id', wrap(async (req, res) => {
+  const row = db.prepare('SELECT * FROM initiatives WHERE id = ?').get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'No such initiative' })
+  const title = req.body?.title !== undefined ? String(req.body.title).trim() || row.title : row.title
+  const jiraKey =
+    req.body?.jiraKey !== undefined ? String(req.body.jiraKey).trim() || null : row.jira_key
+  const archived = req.body?.archived !== undefined ? (req.body.archived ? 1 : 0) : row.archived
+  db.prepare('UPDATE initiatives SET title = ?, jira_key = ?, archived = ? WHERE id = ?')
+    .run(title, jiraKey, archived, row.id)
+  if (req.body?.teamIds !== undefined) setInitiativeTeams(row.id, req.body.teamIds)
+  res.json(initiativeRow(db.prepare('SELECT * FROM initiatives WHERE id = ?').get(row.id)))
+}))
+
+/* weekly reports */
+
+router.get('/status-reports', wrap(async (req, res) => {
+  res.json({
+    reports: db
+      .prepare(
+        `SELECT r.id, r.week, (SELECT COUNT(*) FROM report_entries e WHERE e.report_id = r.id) AS n
+         FROM status_reports r ORDER BY r.week DESC`
+      )
+      .all()
+      .map((r) => ({ id: r.id, week: r.week, entryCount: r.n })),
+  })
+}))
+
+router.get('/status-reports/:week', wrap(async (req, res) => {
+  const report = db.prepare('SELECT * FROM status_reports WHERE week = ?').get(mondayOf(req.params.week))
+  if (!report) return res.status(404).json({ error: 'No report for that week' })
+  res.json(reportPayload(report))
+}))
+
+/**
+ * Create a week's report. `copyFrom` picks the source: a report id, 'blank'
+ * for an empty report, or omitted for the latest report before that week.
+ */
+router.post('/status-reports', wrap(async (req, res) => {
+  const week = mondayOf(req.body?.week)
+  const existing = db.prepare('SELECT * FROM status_reports WHERE week = ?').get(week)
+  if (existing) return res.status(409).json({ error: `A report for the week of ${week} already exists` })
+
+  const info = db.prepare('INSERT INTO status_reports (week, created_at) VALUES (?, ?)').run(week, Date.now())
+  const copyFrom = req.body?.copyFrom
+  const source =
+    copyFrom === 'blank'
+      ? null
+      : copyFrom
+        ? db.prepare('SELECT * FROM status_reports WHERE id = ?').get(Number(copyFrom))
+        : db.prepare('SELECT * FROM status_reports WHERE week < ? ORDER BY week DESC LIMIT 1').get(week)
+  if (source) {
+    // Carry team, epic link, rag + target date; the week's narrative starts blank.
+    const rows = db
+      .prepare(
+        `SELECT e.* FROM report_entries e JOIN initiatives i ON i.id = e.initiative_id
+         WHERE e.report_id = ? AND i.archived = 0 AND e.rag != 'done' ORDER BY e.sort_order`
+      )
+      .all(source.id)
+    const insert = db.prepare(
+      `INSERT INTO report_entries (report_id, team_id, initiative_id, jira_key, rag, update_text, target_date, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    rows.forEach((e, i) =>
+      insert.run(info.lastInsertRowid, e.team_id, e.initiative_id, e.jira_key, e.rag, '', e.target_date, i)
+    )
+  }
+  res.json(reportPayload(db.prepare('SELECT * FROM status_reports WHERE id = ?').get(info.lastInsertRowid)))
+}))
+
+router.delete('/status-reports/:id', wrap(async (req, res) => {
+  db.prepare('DELETE FROM report_entries WHERE report_id = ?').run(req.params.id)
+  db.prepare('DELETE FROM status_reports WHERE id = ?').run(req.params.id)
+  res.json({ ok: true })
+}))
+
+router.post('/status-reports/:id/entries', wrap(async (req, res) => {
+  const report = db.prepare('SELECT * FROM status_reports WHERE id = ?').get(req.params.id)
+  if (!report) return res.status(404).json({ error: 'No such report' })
+  const initiativeId = Number(req.body?.initiativeId)
+  if (!db.prepare('SELECT id FROM initiatives WHERE id = ?').get(initiativeId)) {
+    return res.status(400).json({ error: 'No such initiative' })
+  }
+  const teamId = req.body?.teamId != null ? Number(req.body.teamId) : null
+  const jiraKey = String(req.body?.jiraKey || '').trim() || null
+  const max = db
+    .prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM report_entries WHERE report_id = ?')
+    .get(report.id).m
+  db.prepare(
+    'INSERT OR IGNORE INTO report_entries (report_id, team_id, initiative_id, jira_key, sort_order) VALUES (?, ?, ?, ?, ?)'
+  ).run(report.id, teamId, initiativeId, jiraKey, max + 1)
+  res.json(reportPayload(report))
+}))
+
+router.put('/status-entries/:id', wrap(async (req, res) => {
+  const row = db.prepare('SELECT * FROM report_entries WHERE id = ?').get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'No such entry' })
+  const rag = req.body?.rag !== undefined ? String(req.body.rag) : row.rag
+  const updateText = req.body?.updateText !== undefined ? String(req.body.updateText) : row.update_text
+  const targetDate =
+    req.body?.targetDate !== undefined ? String(req.body.targetDate || '') || null : row.target_date
+  const jiraKey =
+    req.body?.jiraKey !== undefined ? String(req.body.jiraKey || '').trim() || null : row.jira_key
+  db.prepare('UPDATE report_entries SET rag = ?, update_text = ?, target_date = ?, jira_key = ? WHERE id = ?')
+    .run(rag, updateText, targetDate, jiraKey, row.id)
+  res.json({ ok: true })
+}))
+
+router.delete('/status-entries/:id', wrap(async (req, res) => {
+  db.prepare('DELETE FROM report_entries WHERE id = ?').run(req.params.id)
+  res.json({ ok: true })
+}))
+
 /** Site base URL so the UI can deep-link an issue key back into Jira. */
 router.get('/site-url', wrap(async (req, res) => {
   const cloudId = activeCloudId()
