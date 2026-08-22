@@ -115,7 +115,20 @@ export function metricValue(issue, metric = 'count') {
   return (METRICS[metric] || METRICS.count).value(issue)
 }
 
-export function summarise(issues, metric = 'count') {
+/**
+ * The actual work items in a scope. Anything that is somebody's parent within
+ * the scope is a container (initiative, epic, a story with sub-tasks), so
+ * completion and workload are counted over the rest — the stories, bugs and
+ * spikes that carry the work. A container with no children in scope still
+ * counts as its own work item, so empty epics don't vanish.
+ */
+export function workItems(issues) {
+  const parents = new Set(issues.map((i) => i.parent_id).filter(Boolean))
+  return issues.filter((i) => !parents.has(i.id))
+}
+
+export function summarise(allIssues, metric = 'count') {
+  const issues = workItems(allIssues)
   const total = issues.reduce((s, i) => s + metricValue(i, metric), 0)
   const byCategory = { new: 0, indeterminate: 0, done: 0 }
   for (const i of issues) {
@@ -468,7 +481,7 @@ export function sankey({ issues, dimensions = ['assignee', 'epic', 'category'], 
   const columnTotals = dims.map(() => new Map())
   const rowsForIssue = []
 
-  for (const issue of issues) {
+  for (const issue of workItems(issues)) {
     const w = metricValue(issue, metric)
     if (!w) continue
     const path = dims.map((d) => resolve(issue, d))
@@ -524,7 +537,7 @@ export function sankey({ issues, dimensions = ['assignee', 'epic', 'category'], 
 
 export function peopleBreakdown({ issues, metric = 'count' }) {
   const map = new Map()
-  for (const i of issues) {
+  for (const i of workItems(issues)) {
     const id = i.assignee_id || 'unassigned'
     if (!map.has(id)) {
       map.set(id, {
@@ -575,7 +588,7 @@ export function breakdown({ issues, groupBy = 'assignee', metric = 'count', max 
   }
 
   const map = new Map()
-  for (const i of issues) {
+  for (const i of workItems(issues)) {
     const g = resolve(i)
     if (!map.has(g.id)) {
       map.set(g.id, { id: g.id, name: g.name, total: 0, done: 0, inProgress: 0, todo: 0, issues: 0 })
@@ -625,7 +638,7 @@ export function crosstab({
   const groupOf = resolverFor(groupBy)
   const stackOf = resolverFor(stackBy)
 
-  const cells = issues.map((i) => ({ g: groupOf(i), s: stackOf(i), w: metricValue(i, metric) }))
+  const cells = workItems(issues).map((i) => ({ g: groupOf(i), s: stackOf(i), w: metricValue(i, metric) }))
 
   const stackTotals = new Map()
   for (const c of cells) stackTotals.set(c.s.name, (stackTotals.get(c.s.name) || 0) + c.w)
@@ -690,7 +703,7 @@ export function timeseries({
   }
 
   const events = []
-  for (const i of issues) {
+  for (const i of workItems(issues)) {
     const date = mode === 'created' ? i.created : i.resolved
     if (!date) continue
     const w = metricValue(i, metric)
@@ -1189,7 +1202,8 @@ export function graphData({ issues, includeStories = false, maxStories = 120 }) 
 }
 
 /** Issues resolved per week — the throughput companion to the CFD. */
-export function throughput({ issues, weeks = 12 }) {
+export function throughput({ issues: allIssues, weeks = 12 }) {
+  const issues = workItems(allIssues)
   const now = Date.now()
   const startOfWeek = (ts) => {
     const d = new Date(ts)

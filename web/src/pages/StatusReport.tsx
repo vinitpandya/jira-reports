@@ -89,6 +89,8 @@ export function StatusReportPage() {
   const [shownFields, setShownFields] = useState<string[]>(loadShownFields)
   const [fieldsMenu, setFieldsMenu] = useState(false)
   const [armedDrag, setArmedDrag] = useState<number | null>(null)
+  const [dropTarget, setDropTarget] = useState<number | null>(null)
+  const importInput = useRef<HTMLInputElement>(null)
 
   const toggleField = (name: string) => {
     setShownFields((list) => {
@@ -284,6 +286,53 @@ export function StatusReportPage() {
     api.put(`/status-reports/${report.id}/order`, { initiativeIds: order }).catch(fail)
   }
 
+  const mergeWorkstream = async (sourceId: number, targetId: number) => {
+    try {
+      await api.post(`/initiatives/${sourceId}/merge`, { into: targetId })
+      setEditingGroup(null)
+      await loadInitiatives()
+      if (report) await openWeek(report.week)
+    } catch (err) {
+      fail(err)
+    }
+  }
+
+  const exportJson = () => {
+    if (!report) return
+    const iniById = new Map(initiatives.map((i) => [i.id, i]))
+    const payload = {
+      app: 'jira-reports-status',
+      version: 1,
+      week: report.week,
+      entries: report.entries.map((e) => ({
+        workstream: { title: e.title, jiraKey: iniById.get(e.initiativeId)?.jiraKey ?? null },
+        team: e.teamId != null ? teamName(e.teamId) : null,
+        epicKey: e.jiraKey,
+        rag: e.rag,
+        updateText: e.updateText,
+        targetDate: e.targetDate,
+      })),
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `status-${report.week}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const importJson = async (file: File) => {
+    try {
+      const parsed = JSON.parse(await file.text())
+      const d = await api.post<StatusReport>('/status-reports/import', parsed)
+      await Promise.all([loadReports(), loadTeams(), loadInitiatives()])
+      setReport(d)
+    } catch (err) {
+      fail(err)
+    }
+  }
+
   const removeGroup = async (g: WorkstreamGroup) => {
     if (!report) return
     const n = g.entries.length
@@ -403,11 +452,28 @@ export function StatusReportPage() {
               <button type="button" className="ghost" onClick={() => void copyExport('md')}>
                 {copied === 'md' ? 'Copied ✓' : 'Markdown'}
               </button>
+              <button type="button" className="ghost" onClick={exportJson}>
+                Export JSON
+              </button>
               <button type="button" className="ghost danger" onClick={() => void deleteReport()}>
                 Delete
               </button>
             </>
           )}
+          <button type="button" className="ghost" onClick={() => importInput.current?.click()}>
+            Import JSON
+          </button>
+          <input
+            ref={importInput}
+            type="file"
+            accept="application/json,.json"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) void importJson(f)
+              e.target.value = ''
+            }}
+          />
           <button type="button" className="primary" onClick={() => setCreating(true)}>
             New report
           </button>
@@ -524,14 +590,26 @@ export function StatusReportPage() {
                 return (
                   <section
                     key={g.initiativeId}
-                    className="card ws-card"
+                    className={`card ws-card${dropTarget === g.initiativeId ? ' drop-target' : ''}`}
                     style={{ padding: '12px 14px' }}
                     draggable={armedDrag === g.initiativeId}
-                    onDragStart={(ev) => ev.dataTransfer.setData('text/ws', String(g.initiativeId))}
-                    onDragEnd={() => setArmedDrag(null)}
-                    onDragOver={(ev) => ev.preventDefault()}
+                    onDragStart={(ev) => {
+                      ev.dataTransfer.setData('text/ws', String(g.initiativeId))
+                      ev.dataTransfer.effectAllowed = 'move'
+                    }}
+                    onDragEnd={() => {
+                      setArmedDrag(null)
+                      setDropTarget(null)
+                    }}
+                    onDragOver={(ev) => {
+                      ev.preventDefault()
+                      ev.dataTransfer.dropEffect = 'move'
+                      setDropTarget(g.initiativeId)
+                    }}
+                    onDragLeave={() => setDropTarget((t) => (t === g.initiativeId ? null : t))}
                     onDrop={(ev) => {
                       ev.preventDefault()
+                      setDropTarget(null)
                       const from = Number(ev.dataTransfer.getData('text/ws'))
                       if (from) reorderGroups(from, g.initiativeId)
                     }}
@@ -837,6 +915,8 @@ export function StatusReportPage() {
       {editingGroup && (
         <EditWorkstreamModal
           group={editingGroup}
+          others={initiatives.filter((i) => !i.archived && i.id !== editingGroup.initiativeId)}
+          onMerge={(targetId) => void mergeWorkstream(editingGroup.initiativeId, targetId)}
           onClose={() => setEditingGroup(null)}
           onSaved={async () => {
             setEditingGroup(null)
@@ -1554,14 +1634,19 @@ function EditEntryModal({
 
 function EditWorkstreamModal({
   group,
+  others,
+  onMerge,
   onClose,
   onSaved,
 }: {
   group: WorkstreamGroup
+  others: StatusInitiative[]
+  onMerge: (targetId: number) => void
   onClose: () => void
   onSaved: () => void
 }) {
   const [title, setTitle] = useState(group.title)
+  const [mergeInto, setMergeInto] = useState('')
 
   const save = async (archive?: boolean) => {
     await api.put(`/initiatives/${group.initiativeId}`, {
@@ -1570,6 +1655,8 @@ function EditWorkstreamModal({
     })
     onSaved()
   }
+
+  const target = others.find((o) => String(o.id) === mergeInto)
 
   return (
     <Modal title="Edit workstream" onClose={onClose}>
@@ -1582,6 +1669,44 @@ function EditWorkstreamModal({
           Archiving keeps this week's entries but leaves the workstream out of future copy-forwards
           and pickers.
         </p>
+        {others.length > 0 && (
+          <div className="field">
+            <label htmlFor="ew-merge">Merge into another workstream</label>
+            <div className="row" style={{ gap: 8 }}>
+              <select
+                id="ew-merge"
+                value={mergeInto}
+                onChange={(e) => setMergeInto(e.target.value)}
+                style={{ flex: 1 }}
+              >
+                <option value="">Choose a target…</option>
+                {others.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.title}
+                    {o.jiraKey ? ` · ${o.jiraKey}` : ''}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="ghost danger"
+                disabled={!target}
+                onClick={() => {
+                  if (!target) return
+                  if (
+                    window.confirm(
+                      `Merge "${group.title}" into "${target.title}"? All its updates across every week move over; matching entries are combined. This cannot be undone.`
+                    )
+                  ) {
+                    onMerge(target.id)
+                  }
+                }}
+              >
+                Merge
+              </button>
+            </div>
+          </div>
+        )}
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <button type="button" className="ghost danger" onClick={() => void save(true)}>
             Archive workstream
@@ -1619,6 +1744,15 @@ function ManageTeamsModal({
     await api.put(`/teams/${id}`, { archived })
     await onChanged()
   }
+  const removeTeam = async (id: number, name: string) => {
+    if (!window.confirm(`Delete the team "${name}"?`)) return
+    try {
+      await api.del(`/teams/${id}`)
+      await onChanged()
+    } catch (err) {
+      window.alert(String((err as Error).message))
+    }
+  }
   const add = async () => {
     if (!newName.trim()) return
     await api.post('/teams', { name: newName.trim() })
@@ -1644,6 +1778,15 @@ function ManageTeamsModal({
             />
             <button type="button" className="ghost" onClick={() => void setArchived(t.id, !t.archived)}>
               {t.archived ? 'Restore' : 'Archive'}
+            </button>
+            <button
+              type="button"
+              className="ghost danger widget-btn"
+              title="Delete team (only when unused in reports)"
+              aria-label={`Delete ${t.name}`}
+              onClick={() => void removeTeam(t.id, t.name)}
+            >
+              ✕
             </button>
           </div>
         ))}

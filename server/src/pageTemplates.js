@@ -50,7 +50,10 @@ export const SYSTEM_PAGES = [
     name: 'People & flow',
     layout: [
       { i: 'pe-1', type: 'people-load', title: '', x: 0, y: 0, w: 6, h: 4, options: {} },
-      { i: 'pe-2', type: 'chord', title: '', x: 6, y: 0, w: 6, h: 5, options: { flow: 'handovers' } },
+      {
+        i: 'pe-2', type: 'sankey', title: '', x: 6, y: 0, w: 6, h: 5,
+        options: { from: 'assignee', via: 'type', to: 'epic' },
+      },
       { i: 'pe-3', type: 'cycletime', title: '', x: 0, y: 4, w: 6, h: 4, options: { groupBy: 'assignee' } },
       {
         i: 'pe-4', type: 'chart', title: '', x: 6, y: 5, w: 6, h: 4,

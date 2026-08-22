@@ -617,6 +617,19 @@ router.put('/teams/:id', wrap(async (req, res) => {
   res.json({ id: row.id, name, sortOrder: row.sort_order, archived: !!archived })
 }))
 
+/** Hard delete is allowed only for teams no report has ever used. */
+router.delete('/teams/:id', wrap(async (req, res) => {
+  const used = db
+    .prepare('SELECT COUNT(*) AS n FROM report_entries WHERE team_id = ?')
+    .get(req.params.id).n
+  if (used > 0) {
+    return res.status(400).json({ error: 'This team appears in reports — archive it instead' })
+  }
+  db.prepare('DELETE FROM initiative_teams WHERE team_id = ?').run(req.params.id)
+  db.prepare('DELETE FROM teams WHERE id = ?').run(req.params.id)
+  res.json({ ok: true })
+}))
+
 /* initiatives (reportable workstreams) */
 
 router.get('/initiatives', wrap(async (req, res) => {
@@ -647,6 +660,59 @@ router.put('/initiatives/:id', wrap(async (req, res) => {
     .run(title, jiraKey, archived, row.id)
   if (req.body?.teamIds !== undefined) setInitiativeTeams(row.id, req.body.teamIds)
   res.json(initiativeRow(db.prepare('SELECT * FROM initiatives WHERE id = ?').get(row.id)))
+}))
+
+/** Merge text/status/date/key from a source entry into a surviving one. */
+function mergedEntryValues(target, src) {
+  const tText = (target.update_text || '').trim()
+  const sText = (src.update_text || '').trim()
+  const updateText = !tText ? sText : sText && !tText.includes(sText) ? `${tText}\n${sText}` : tText
+  return {
+    updateText,
+    rag: target.rag && target.rag !== 'on-track' ? target.rag : src.rag || target.rag || 'on-track',
+    targetDate: target.target_date || src.target_date || null,
+    jiraKey: target.jira_key || src.jira_key || null,
+  }
+}
+
+const applyEntryValues = db.prepare(
+  'UPDATE report_entries SET update_text = ?, rag = ?, target_date = ?, jira_key = ? WHERE id = ?'
+)
+
+/**
+ * Fold one workstream into another, across all weeks. Entries move to the
+ * target; where the target already reports for the same week and team, the
+ * two entries merge and the source entry is dropped.
+ */
+router.post('/initiatives/:id/merge', wrap(async (req, res) => {
+  const source = db.prepare('SELECT * FROM initiatives WHERE id = ?').get(req.params.id)
+  const target = db.prepare('SELECT * FROM initiatives WHERE id = ?').get(Number(req.body?.into))
+  if (!source || !target) return res.status(404).json({ error: 'No such workstream' })
+  if (source.id === target.id) return res.status(400).json({ error: 'Cannot merge a workstream into itself' })
+
+  db.transaction(() => {
+    const srcEntries = db.prepare('SELECT * FROM report_entries WHERE initiative_id = ?').all(source.id)
+    for (const e of srcEntries) {
+      const existing = db
+        .prepare(
+          'SELECT * FROM report_entries WHERE report_id = ? AND team_id IS ? AND initiative_id = ?'
+        )
+        .get(e.report_id, e.team_id, target.id)
+      if (existing) {
+        const m = mergedEntryValues(existing, e)
+        applyEntryValues.run(m.updateText, m.rag, m.targetDate, m.jiraKey, existing.id)
+        db.prepare('DELETE FROM report_entries WHERE id = ?').run(e.id)
+      } else {
+        db.prepare('UPDATE report_entries SET initiative_id = ? WHERE id = ?').run(target.id, e.id)
+      }
+    }
+    if (!target.jira_key && source.jira_key) {
+      db.prepare('UPDATE initiatives SET jira_key = ? WHERE id = ?').run(source.jira_key, target.id)
+    }
+    db.prepare('DELETE FROM initiative_teams WHERE initiative_id = ?').run(source.id)
+    db.prepare('DELETE FROM initiatives WHERE id = ?').run(source.id)
+  })()
+  res.json({ ok: true, targetId: target.id })
 }))
 
 /* weekly reports */
@@ -703,6 +769,91 @@ router.post('/status-reports', wrap(async (req, res) => {
     )
   }
   res.json(reportPayload(db.prepare('SELECT * FROM status_reports WHERE id = ?').get(info.lastInsertRowid)))
+}))
+
+/**
+ * Import a report exported from another instance. Creates the week if it is
+ * missing; otherwise merges: unknown teams and workstreams are created,
+ * matching entries (same week, team, workstream) merge their content.
+ */
+router.post('/status-reports/import', wrap(async (req, res) => {
+  const body = req.body || {}
+  const week = mondayOf(body.week)
+  const entries = Array.isArray(body.entries) ? body.entries : []
+  if (!entries.length) return res.status(400).json({ error: 'Nothing to import' })
+
+  db.transaction(() => {
+    let report = db.prepare('SELECT * FROM status_reports WHERE week = ?').get(week)
+    if (!report) {
+      const info = db.prepare('INSERT INTO status_reports (week, created_at) VALUES (?, ?)').run(week, Date.now())
+      report = db.prepare('SELECT * FROM status_reports WHERE id = ?').get(info.lastInsertRowid)
+    }
+
+    const teamIdByName = () =>
+      new Map(db.prepare('SELECT id, name FROM teams').all().map((t) => [t.name.trim().toLowerCase(), t.id]))
+    let teams = teamIdByName()
+
+    const findInitiative = (title, jiraKey) => {
+      if (jiraKey) {
+        const byKey = db.prepare('SELECT * FROM initiatives WHERE jira_key = ?').get(jiraKey)
+        if (byKey) return byKey
+      }
+      return db.prepare('SELECT * FROM initiatives WHERE LOWER(title) = LOWER(?)').get(title)
+    }
+
+    let sort = db
+      .prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM report_entries WHERE report_id = ?')
+      .get(report.id).m
+
+    for (const raw of entries) {
+      const title = String(raw.workstream?.title || raw.title || '').trim()
+      if (!title) continue
+      const wsKey = String(raw.workstream?.jiraKey || '').trim() || null
+      const teamName = String(raw.team || '').trim()
+
+      let teamId = null
+      if (teamName) {
+        teamId = teams.get(teamName.toLowerCase()) ?? null
+        if (teamId == null) {
+          const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM teams').get().m
+          const info = db.prepare('INSERT INTO teams (name, sort_order) VALUES (?, ?)').run(teamName, max + 1)
+          teamId = Number(info.lastInsertRowid)
+          teams = teamIdByName()
+        }
+      }
+
+      let ini = findInitiative(title, wsKey)
+      if (!ini) {
+        const info = db
+          .prepare('INSERT INTO initiatives (title, jira_key, created_at) VALUES (?, ?, ?)')
+          .run(title, wsKey, Date.now())
+        ini = db.prepare('SELECT * FROM initiatives WHERE id = ?').get(info.lastInsertRowid)
+      }
+
+      const incoming = {
+        update_text: String(raw.updateText || ''),
+        rag: String(raw.rag || 'on-track'),
+        target_date: String(raw.targetDate || '') || null,
+        jira_key: String(raw.epicKey || '').trim() || null,
+      }
+      const existing = db
+        .prepare('SELECT * FROM report_entries WHERE report_id = ? AND team_id IS ? AND initiative_id = ?')
+        .get(report.id, teamId, ini.id)
+      if (existing) {
+        const m = mergedEntryValues(existing, incoming)
+        applyEntryValues.run(m.updateText, m.rag, m.targetDate, m.jiraKey, existing.id)
+      } else {
+        sort += 1
+        db.prepare(
+          `INSERT INTO report_entries (report_id, team_id, initiative_id, jira_key, rag, update_text, target_date, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(report.id, teamId, ini.id, incoming.jira_key, incoming.rag, incoming.update_text, incoming.target_date, sort)
+      }
+    }
+  })()
+
+  const report = db.prepare('SELECT * FROM status_reports WHERE week = ?').get(week)
+  res.json(reportPayload(report))
 }))
 
 router.delete('/status-reports/:id', wrap(async (req, res) => {
