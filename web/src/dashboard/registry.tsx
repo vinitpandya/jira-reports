@@ -357,12 +357,13 @@ export const WIDGETS: WidgetDef[] = [
         quick: true,
       },
       {
-        key: 'includeStories',
-        label: 'Detail',
+        key: 'depth',
+        label: 'Drill down to',
         kind: 'select',
         choices: [
-          { value: '', label: 'Epics & up' },
-          { value: 'true', label: 'Stories' },
+          { value: 'initiatives', label: 'Initiatives' },
+          { value: 'epics', label: 'Epics' },
+          { value: 'stories', label: 'Stories' },
         ],
         quick: true,
       },
@@ -965,7 +966,12 @@ function CycleTimeBody({ widget }: { widget: WidgetConfig }) {
 function GraphBody({ widget }: { widget: WidgetConfig }) {
   const { data } = useReport<GraphData>('/reports/graph', {
     ...widgetExtra(widget.options),
-    includeStories: widget.options.includeStories === 'true' ? 'true' : 'false',
+    depth:
+      widget.options.depth === 'initiatives' || widget.options.depth === 'stories'
+        ? widget.options.depth
+        : widget.options.includeStories === 'true' // legacy saved widgets
+          ? 'stories'
+          : 'epics',
   })
   if (!data?.nodes?.length) return <Empty title="Nothing above story level" />
   if (widget.options.view === 'table') return <GraphTable data={data} />

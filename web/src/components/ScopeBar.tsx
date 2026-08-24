@@ -138,6 +138,39 @@ export function ScopeBar() {
         <option value="all">All time</option>
       </Select>
 
+      <Picker
+        label="States"
+        options={(catalog?.statuses ?? []).map((s) => ({
+          value: s.name,
+          label: s.name,
+          sub: s.category === 'done' ? 'Done' : s.category === 'indeterminate' ? 'In progress' : 'To do',
+          count: s.n,
+        }))}
+        selected={scope.statuses}
+        onChange={(v) => setScope({ statuses: v })}
+        placeholder="All states"
+        emptyText="No statuses yet"
+        width={190}
+      />
+
+      <div className="field">
+        <label>Completed</label>
+        <button
+          type="button"
+          className="pill"
+          aria-pressed={scope.excludeDone}
+          style={
+            scope.excludeDone
+              ? { color: 'var(--accent)', borderColor: 'var(--accent)', fontWeight: 600 }
+              : undefined
+          }
+          onClick={() => setScope({ excludeDone: !scope.excludeDone })}
+          title="Hide everything done, cancelled, closed, rejected or deleted"
+        >
+          {scope.excludeDone ? 'Hidden ✓' : 'Shown'}
+        </button>
+      </div>
+
       <div className="field">
         <label>Saved filters</label>
         <div className="row" style={{ gap: 4 }}>

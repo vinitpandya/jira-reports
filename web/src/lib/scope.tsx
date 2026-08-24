@@ -19,9 +19,21 @@ export type Scope = {
   followLinks: boolean
   metric: 'count' | 'points' | 'timespent'
   range: RangePreset
+  /** Limit to these status names (empty = all). */
+  statuses: string[]
+  /** Drop everything done, cancelled, closed, rejected or deleted. */
+  excludeDone: boolean
 }
 
-export const DEFAULT_SCOPE: Scope = { projects: [], roots: [], followLinks: false, metric: 'count', range: '90d' }
+export const DEFAULT_SCOPE: Scope = {
+  projects: [],
+  roots: [],
+  followLinks: false,
+  metric: 'count',
+  range: '90d',
+  statuses: [],
+  excludeDone: false,
+}
 
 const STORAGE_KEY = 'jira-reports.scope'
 
@@ -157,6 +169,8 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
     if (scope.projects.length) p.projects = scope.projects.join(',')
     if (scope.roots.length) p.roots = scope.roots.join(',')
     if (scope.roots.length && scope.followLinks) p.followLinks = 'true'
+    if (scope.statuses.length) p.statuses = scope.statuses.join(',')
+    if (scope.excludeDone) p.excludeDone = 'true'
     const from = rangeStart(scope.range)
     if (from) p.from = from
     return p

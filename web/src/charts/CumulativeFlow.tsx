@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import * as d3 from 'd3'
-import { ordinalRamp, MAX_ORDINAL_STEPS } from '../lib/palette'
+import { makeColorScale, ordinalRamp, MAX_ORDINAL_STEPS } from '../lib/palette'
 import { compact, full, longDate, shortDate } from '../lib/format'
 import { Legend, Tooltip, useMeasure, useThemeVersion, type TooltipRow } from '../components/ui'
 import type { Cfd } from '../lib/api'
@@ -10,48 +10,19 @@ const M = { top: 10, right: 96, bottom: 30, left: 52 }
 type Folded = { keys: string[]; rows: { date: Date; values: number[] }[]; foldedFrom: string[] }
 
 /**
- * Statuses arrive in workflow order. The ordinal ramp tops out at five steps in
- * light mode, so any excess folds into one labelled "Other" band placed where the
- * first folded status sat — the fold is stated under the chart and the table view
- * still carries every status.
+ * Statuses arrive in workflow order and every one keeps its own band — the
+ * flow matters, so nothing folds into "Other". Up to five bands wear the
+ * ordinal ramp; beyond that the categorical palette takes over.
  */
-function fold(data: Cfd, max = MAX_ORDINAL_STEPS): Folded {
+function fold(data: Cfd): Folded {
   const rows = data.series.map((p) => ({
     date: new Date(`${p.date}T00:00:00Z`),
     raw: p as Record<string, number | string>,
   }))
-  const area = new Map(data.keys.map((k) => [k, d3.sum(data.series, (p) => Number(p[k]) || 0)]))
-
-  if (data.keys.length <= max) {
-    return {
-      keys: data.keys,
-      rows: rows.map((r) => ({ date: r.date, values: data.keys.map((k) => Number(r.raw[k]) || 0) })),
-      foldedFrom: [],
-    }
-  }
-
-  const keep = new Set(
-    [...data.keys].sort((a, b) => (area.get(b) ?? 0) - (area.get(a) ?? 0)).slice(0, max - 1)
-  )
-  const foldedFrom = data.keys.filter((k) => !keep.has(k))
-  const otherAt = data.keys.findIndex((k) => !keep.has(k))
-  const keys: string[] = []
-  data.keys.forEach((k, i) => {
-    if (i === otherAt) keys.push(`Other (${foldedFrom.length})`)
-    if (keep.has(k)) keys.push(k)
-  })
-
   return {
-    keys,
-    rows: rows.map((r) => ({
-      date: r.date,
-      values: keys.map((k) =>
-        k.startsWith('Other (')
-          ? d3.sum(foldedFrom, (f) => Number(r.raw[f]) || 0)
-          : Number(r.raw[k]) || 0
-      ),
-    })),
-    foldedFrom,
+    keys: data.keys,
+    rows: rows.map((r) => ({ date: r.date, values: data.keys.map((k) => Number(r.raw[k]) || 0) })),
+    foldedFrom: [],
   }
 }
 
@@ -79,6 +50,11 @@ export function CumulativeFlow({
   )
 
   const colorFor = useMemo(() => {
+    if (folded.keys.length > MAX_ORDINAL_STEPS) {
+      // Too many bands for the ramp: distinct categorical hues per status.
+      const scale = makeColorScale(folded.keys)
+      return (k: string) => scale(k)
+    }
     const ramp = ordinalRamp(folded.keys.length)
     const darkestFirst = [...ramp].reverse()
     const order = [...folded.keys].reverse() // done → todo

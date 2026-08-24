@@ -40,7 +40,7 @@ export const SYSTEM_PAGES = [
     name: 'Initiatives',
     layout: [
       { i: 'in-1', type: 'top-items', title: '', x: 0, y: 0, w: 6, h: 5, options: {} },
-      { i: 'in-2', type: 'graph', title: '', x: 6, y: 0, w: 6, h: 5, options: { includeStories: '' } },
+      { i: 'in-2', type: 'graph', title: '', x: 6, y: 0, w: 6, h: 5, options: { depth: 'epics', colorBy: 'project' } },
       { i: 'in-3', type: 'cycletime', title: '', x: 0, y: 5, w: 6, h: 4, options: { groupBy: 'epic' } },
       { i: 'in-4', type: 'icicle', title: '', x: 6, y: 5, w: 6, h: 4, options: {} },
     ],
@@ -70,7 +70,7 @@ export const SYSTEM_PAGES = [
         options: { from: 'assignee', via: 'epic', to: 'category' },
       },
       { i: 'ins-2', type: 'chord', title: '', x: 8, y: 0, w: 4, h: 5, options: { flow: 'projects' } },
-      { i: 'ins-3', type: 'graph', title: '', x: 0, y: 5, w: 8, h: 5, options: { includeStories: '' } },
+      { i: 'ins-3', type: 'graph', title: '', x: 0, y: 5, w: 8, h: 5, options: { depth: 'epics', colorBy: 'project' } },
       {
         i: 'ins-4', type: 'chart', title: '', x: 8, y: 5, w: 4, h: 5,
         options: { chartType: 'donut', groupBy: 'project' },

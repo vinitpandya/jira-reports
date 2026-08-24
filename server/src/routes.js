@@ -43,6 +43,8 @@ function scopeFrom(query) {
     projects: csv(query.projects),
     roots: csv(query.roots),
     types: csv(query.types),
+    statuses: csv(query.statuses),
+    excludeDone: query.excludeDone === 'true',
     descendants: query.descendants !== 'false',
     followLinks: query.followLinks === 'true',
   })
@@ -370,10 +372,15 @@ router.get('/reports/cycletime', wrap(async (req, res) => {
 
 router.get('/reports/graph', wrap(async (req, res) => {
   const { issues } = scopeFrom(req.query)
+  const depth = ['initiatives', 'epics', 'stories'].includes(req.query.depth)
+    ? req.query.depth
+    : req.query.includeStories === 'true'
+      ? 'stories'
+      : 'epics'
   res.json(
     graphData({
       issues,
-      includeStories: req.query.includeStories === 'true',
+      depth,
       maxStories: Math.min(Number(req.query.maxStories) || 120, 300),
     })
   )

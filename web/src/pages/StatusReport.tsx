@@ -845,7 +845,9 @@ export function StatusReportPage() {
           </div>
           )}
 
-          {report.entries.length > 0 && <ReportSummary entries={report.entries} teamName={teamName} />}
+          {report.entries.length > 0 && (
+            <ReportSummary week={report.week} entries={report.entries} teams={teams} teamName={teamName} />
+          )}
         </>
       )}
 
@@ -1104,18 +1106,177 @@ function summarize(entries: StatusEntry[]) {
   }
 }
 
+const SEVERITY: Record<Rag, number> = { 'off-track': 0, 'at-risk': 1, 'on-track': 2, done: 3, paused: 4 }
+
+const oneLine = (text: string, max = 160): string => {
+  const line = text.trim().split('\n')[0]?.trim() ?? ''
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line
+}
+
+const worstRag = (rags: Rag[]): Rag =>
+  [...rags].sort((a, b) => SEVERITY[a] - SEVERITY[b])[0] ?? 'on-track'
+
+type SummaryGroup = {
+  key: string
+  label: string
+  rag: Rag
+  targetDate: string | null
+  rows: { label: string; rag: Rag; text: string }[]
+}
+
+/** The summary tree, worst news first; done and paused sink to the bottom. */
+function buildSummaryTree(
+  entries: StatusEntry[],
+  teams: Team[],
+  teamName: (id: number | null) => string,
+  mode: 'workstream' | 'team'
+): SummaryGroup[] {
+  let groups: SummaryGroup[]
+  if (mode === 'workstream') {
+    groups = groupByWorkstream(entries).map((g) => {
+      const general = g.entries.find((e) => e.teamId == null)
+      const rows = [...g.entries]
+        .sort((a, b) => {
+          const ga = a.teamId == null ? -1 : SEVERITY[a.rag]
+          const gb = b.teamId == null ? -1 : SEVERITY[b.rag]
+          return ga - gb
+        })
+        .map((e) => ({
+          label: e.teamId == null ? 'Overall' : teamName(e.teamId),
+          rag: e.rag,
+          text: oneLine(e.updateText),
+        }))
+      return {
+        key: `w${g.initiativeId}`,
+        label: g.title,
+        rag: general?.rag ?? worstRag(g.entries.map((e) => e.rag)),
+        targetDate: general?.targetDate ?? null,
+        rows,
+      }
+    })
+  } else {
+    const active = teams.filter((t) => !t.archived)
+    groups = []
+    for (const t of active) {
+      const teamEntries = entries.filter((e) => e.teamId === t.id)
+      if (!teamEntries.length) continue
+      groups.push({
+        key: `t${t.id}`,
+        label: t.name,
+        rag: worstRag(teamEntries.map((e) => e.rag)),
+        targetDate: null,
+        rows: [...teamEntries]
+          .sort((a, b) => SEVERITY[a.rag] - SEVERITY[b.rag])
+          .map((e) => ({ label: e.title, rag: e.rag, text: oneLine(e.updateText) })),
+      })
+    }
+    const general = entries.filter((e) => e.teamId == null)
+    if (general.length) {
+      groups.push({
+        key: 'general',
+        label: 'General',
+        rag: worstRag(general.map((e) => e.rag)),
+        targetDate: null,
+        rows: [...general]
+          .sort((a, b) => SEVERITY[a.rag] - SEVERITY[b.rag])
+          .map((e) => ({ label: e.title, rag: e.rag, text: oneLine(e.updateText) })),
+      })
+    }
+  }
+  return groups.sort((a, b) => SEVERITY[a.rag] - SEVERITY[b.rag] || a.label.localeCompare(b.label))
+}
+
+function summaryTreeMarkdown(week: string, groups: SummaryGroup[], entries: StatusEntry[]): string {
+  const s = summarize(entries)
+  const tallies = RAGS.filter((r) => s.counts[r.value])
+    .map((r) => `${s.counts[r.value]} ${r.label.toLowerCase()}`)
+    .join(' · ')
+  const lines = [
+    `# Summary — week of ${longDate(week)}`,
+    '',
+    `${s.workstreams} workstreams · ${s.teamsReporting} teams reporting · ${tallies}`,
+    '',
+  ]
+  for (const g of groups) {
+    lines.push(
+      `- **${g.label}** — ${ragLabel(g.rag)}${g.targetDate ? ` · target ${shortDate(g.targetDate)}` : ''}`
+    )
+    for (const r of g.rows) {
+      lines.push(`  - ${r.label} (${ragLabel(r.rag)}): ${r.text || '—'}`)
+    }
+  }
+  return lines.join('\n') + '\n'
+}
+
+function summaryTreeHtml(week: string, groups: SummaryGroup[], entries: StatusEntry[]): string {
+  const s = summarize(entries)
+  const tallies = RAGS.filter((r) => s.counts[r.value])
+    .map(
+      (r) =>
+        `<strong style="color:${RAG_HTML_COLOR[r.value]}">${s.counts[r.value]} ${r.label.toLowerCase()}</strong>`
+    )
+    .join(' · ')
+  const parts = [
+    `<h1>Summary — week of ${esc(longDate(week))}</h1>`,
+    `<p>${s.workstreams} workstreams · ${s.teamsReporting} teams reporting · ${tallies}</p>`,
+    '<ul>',
+  ]
+  for (const g of groups) {
+    parts.push(
+      `<li><strong>${esc(g.label)}</strong> — <strong style="color:${RAG_HTML_COLOR[g.rag]}">${esc(ragLabel(g.rag))}</strong>` +
+        `${g.targetDate ? ` · target ${esc(shortDate(g.targetDate))}` : ''}<ul>`
+    )
+    for (const r of g.rows) {
+      parts.push(
+        `<li>${esc(r.label)} (<span style="color:${RAG_HTML_COLOR[r.rag]}">${esc(ragLabel(r.rag))}</span>): ${esc(r.text || '—')}</li>`
+      )
+    }
+    parts.push('</ul></li>')
+  }
+  parts.push('</ul>')
+  return parts.join('\n')
+}
+
 function ReportSummary({
+  week,
   entries,
+  teams,
   teamName,
 }: {
+  week: string
   entries: StatusEntry[]
+  teams: Team[]
   teamName: (id: number | null) => string
 }) {
+  const [mode, setMode] = useState<'workstream' | 'team'>('workstream')
+  const [copied, setCopied] = useState(false)
   const s = summarize(entries)
+  const groups = useMemo(
+    () => buildSummaryTree(entries, teams, teamName, mode),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [entries, teams, mode]
+  )
+
+  const copySummary = async () => {
+    const md = summaryTreeMarkdown(week, groups, entries)
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([summaryTreeHtml(week, groups, entries)], { type: 'text/html' }),
+          'text/plain': new Blob([md], { type: 'text/plain' }),
+        }),
+      ])
+    } catch {
+      await navigator.clipboard.writeText(md)
+    }
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1800)
+  }
+
   return (
     <section className="card" style={{ padding: '12px 14px', marginTop: 14 }}>
-      <h2 style={{ fontSize: 14, margin: '0 0 8px' }}>Summary</h2>
-      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+        <h2 style={{ fontSize: 14, margin: 0 }}>Summary</h2>
         <span className="pill">{s.workstreams} workstreams</span>
         <span className="pill">{s.teamsReporting} teams reporting</span>
         {RAGS.map((r) =>
@@ -1125,19 +1286,54 @@ function ReportSummary({
             </span>
           ) : null
         )}
+        <span className="row" style={{ marginLeft: 'auto', gap: 8 }}>
+          <div className="segmented" role="group" aria-label="Summary grouping">
+            <button type="button" aria-pressed={mode === 'workstream'} onClick={() => setMode('workstream')}>
+              By workstream
+            </button>
+            <button type="button" aria-pressed={mode === 'team'} onClick={() => setMode('team')}>
+              By team
+            </button>
+          </div>
+          <button type="button" className="ghost" onClick={() => void copySummary()}>
+            {copied ? 'Copied ✓' : 'Copy summary'}
+          </button>
+        </span>
       </div>
-      {s.risks.length > 0 && (
-        <ul style={{ margin: '10px 0 0', paddingLeft: 18, fontSize: 13 }}>
-          {s.risks.map((e) => (
-            <li key={e.id} style={{ marginBottom: 2 }}>
-              <strong>{e.title}</strong>
-              {e.teamId != null ? ` — ${teamName(e.teamId)}` : ''} ·{' '}
-              <span style={{ color: RAG_CSS[e.rag], fontWeight: 600 }}>{ragLabel(e.rag)}</span>
-              {e.targetDate ? ` · target ${shortDate(e.targetDate)}` : ''}
-            </li>
-          ))}
-        </ul>
-      )}
+
+      <div className="stack" style={{ gap: 10 }}>
+        {groups.map((g) => (
+          <div key={g.key} style={{ opacity: SEVERITY[g.rag] >= 3 ? 0.6 : 1 }}>
+            <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+              <span className="dot" style={{ background: RAG_CSS[g.rag] }} />
+              <strong style={{ fontSize: 13 }}>{g.label}</strong>
+              <span style={{ color: RAG_CSS[g.rag], fontSize: 12, fontWeight: 600 }}>{ragLabel(g.rag)}</span>
+              {g.targetDate && (
+                <span className="muted" style={{ fontSize: 12 }}>· target {shortDate(g.targetDate)}</span>
+              )}
+            </div>
+            <div className="stack" style={{ gap: 2, paddingLeft: 16, marginTop: 3 }}>
+              {g.rows.map((r, i) => (
+                <div
+                  key={i}
+                  className="row"
+                  style={{ gap: 6, fontSize: 12.5, alignItems: 'baseline', flexWrap: 'nowrap', minWidth: 0 }}
+                >
+                  <span style={{ color: RAG_CSS[r.rag], flexShrink: 0 }}>●</span>
+                  <span style={{ fontWeight: 600, flexShrink: 0 }}>{r.label}</span>
+                  <span
+                    className="muted"
+                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+                    title={r.text}
+                  >
+                    {r.text || '—'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </section>
   )
 }

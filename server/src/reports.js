@@ -17,10 +17,27 @@ function placeholders(n) {
  * included. `followLinks` additionally walks outward issue links once, which is
  * how a Product Discovery idea reaches its delivery tickets.
  */
+/**
+ * "Completed" means done, cancelled, closed, rejected or deleted — some of
+ * those live under non-done Jira categories, so the name gets a say too.
+ */
+const DONE_LIKE = /cancel|close|reject|delet/i
+export function isDoneLike(statusName, statusCategory) {
+  return statusCategory === 'done' || DONE_LIKE.test(statusName || '')
+}
+
+/** Effective progress category for an issue, folding done-like names into done. */
+export function categoryOf(issue) {
+  if (isDoneLike(issue.status_name, issue.status_category)) return 'done'
+  return issue.status_category || 'new'
+}
+
 export function resolveScope({
   projects = [],
   roots = [],
   types = [],
+  statuses = [],
+  excludeDone = false,
   descendants = true,
   followLinks = false,
   cloudId = activeCloudId(),
@@ -96,9 +113,18 @@ export function resolveScope({
     )
   }
 
-  const filtered = types.length
+  let filtered = types.length
     ? issues.filter((i) => types.includes(i.type_name) || types.includes(String(i.hierarchy_level)))
     : issues
+  if (statuses.length) {
+    // Containers stay so hierarchy still resolves; work items must match.
+    filtered = filtered.filter(
+      (i) => i.hierarchy_level >= 1 || statuses.includes(i.status_name)
+    )
+  }
+  if (excludeDone) {
+    filtered = filtered.filter((i) => !isDoneLike(i.status_name, i.status_category))
+  }
 
   return { cloudId, issues: filtered }
 }
@@ -132,12 +158,12 @@ export function summarise(allIssues, metric = 'count') {
   const total = issues.reduce((s, i) => s + metricValue(i, metric), 0)
   const byCategory = { new: 0, indeterminate: 0, done: 0 }
   for (const i of issues) {
-    const key = i.status_category || 'new'
+    const key = categoryOf(i)
     byCategory[key] = (byCategory[key] || 0) + metricValue(i, metric)
   }
   const counts = { new: 0, indeterminate: 0, done: 0 }
   for (const i of issues) {
-    const key = i.status_category || 'new'
+    const key = categoryOf(i)
     counts[key] = (counts[key] || 0) + 1
   }
 
@@ -213,9 +239,15 @@ export function cumulativeFlow({
 
   const categoryLabel = { new: 'To do', indeterminate: 'In progress', done: 'Done' }
 
+  const catForStatus = (statusId, statusName) => {
+    const m = statusMeta.get(String(statusId))
+    if (isDoneLike(statusName || m?.name, m?.category_key)) return 'done'
+    return m?.category_key || 'indeterminate'
+  }
+
   const labelFor = (statusId, statusName) => {
     if (groupBy === 'category') {
-      const cat = statusMeta.get(String(statusId))?.category_key || 'indeterminate'
+      const cat = catForStatus(statusId, statusName)
       return categoryLabel[cat] || cat
     }
     return statusMeta.get(String(statusId))?.name || statusName || 'Unknown'
@@ -248,8 +280,8 @@ export function cumulativeFlow({
       ? labelFor(hist[0].from_id, hist[0].from_status)
       : labelFor(issue.status_id, issue.status_name)
     const firstCat = hist.length
-      ? statusMeta.get(String(hist[0].from_id))?.category_key
-      : issue.status_category
+      ? catForStatus(hist[0].from_id, hist[0].from_status)
+      : categoryOf(issue)
 
     events.push({ t: created, label: firstLabel, delta: w })
     noteOrder(firstLabel, 0, firstCat)
@@ -263,7 +295,7 @@ export function cumulativeFlow({
       if (next === prev) return
       events.push({ t, label: prev, delta: -w })
       events.push({ t, label: next, delta: w })
-      noteOrder(next, idx + 1, statusMeta.get(String(h.to_id))?.category_key)
+      noteOrder(next, idx + 1, catForStatus(h.to_id, h.to_status))
       prev = next
       minT = Math.min(minT, t)
       maxT = Math.max(maxT, t)
@@ -356,7 +388,7 @@ export function buildTree({ issues, metric = 'count', rootIds = null }) {
       type: i.type_name,
       level: i.hierarchy_level,
       status: i.status_name,
-      category: i.status_category,
+      category: categoryOf(i),
       assignee: i.assignee_name,
       assigneeId: i.assignee_id,
       project: i.project_key,
@@ -441,8 +473,8 @@ const DIMENSIONS = {
   status: { label: 'Status', of: (i) => i.status_name || 'Unknown', id: (i) => `s:${i.status_id}` },
   category: {
     label: 'Progress',
-    of: (i) => ({ new: 'To do', indeterminate: 'In progress', done: 'Done' })[i.status_category] || 'Unknown',
-    id: (i) => `c:${i.status_category}`,
+    of: (i) => ({ new: 'To do', indeterminate: 'In progress', done: 'Done' })[categoryOf(i)] || 'Unknown',
+    id: (i) => `c:${categoryOf(i)}`,
   },
   type: { label: 'Issue type', of: (i) => i.type_name || 'Unknown', id: (i) => `t:${i.type_id}` },
   priority: { label: 'Priority', of: (i) => i.priority || 'None', id: (i) => `p:${i.priority || 'none'}` },
@@ -559,8 +591,9 @@ export function peopleBreakdown({ issues, metric = 'count' }) {
     e.issues += 1
     e.points += i.story_points || 0
     e.hours += (i.time_spent || 0) / 3600
-    if (i.status_category === 'done') e.done += w
-    else if (i.status_category === 'indeterminate') e.inProgress += w
+    const cat = categoryOf(i)
+    if (cat === 'done') e.done += w
+    else if (cat === 'indeterminate') e.inProgress += w
     else e.todo += w
   }
   return [...map.values()].sort((a, b) => b.total - a.total)
@@ -597,8 +630,9 @@ export function breakdown({ issues, groupBy = 'assignee', metric = 'count', max 
     const w = metricValue(i, metric)
     e.total += w
     e.issues += 1
-    if (i.status_category === 'done') e.done += w
-    else if (i.status_category === 'indeterminate') e.inProgress += w
+    const cat = categoryOf(i)
+    if (cat === 'done') e.done += w
+    else if (cat === 'indeterminate') e.inProgress += w
     else e.todo += w
   }
 
@@ -780,11 +814,14 @@ export function burnup({ issues, cloudId = activeCloudId(), metric = 'count', fr
 
   const history = statusHistoryFor(cloudId, leaves.map((i) => i.id))
   const statusMeta = new Map(
-    db.prepare('SELECT id, category_key FROM statuses WHERE cloud_id = ?').all(cloudId)
-      .map((s) => [String(s.id), s.category_key])
+    db.prepare('SELECT id, name, category_key FROM statuses WHERE cloud_id = ?').all(cloudId)
+      .map((s) => [String(s.id), s])
   )
-  const catOf = (statusId, fallback = 'indeterminate') =>
-    statusMeta.get(String(statusId)) || fallback
+  const catOf = (statusId, fallback = 'indeterminate') => {
+    const m = statusMeta.get(String(statusId))
+    if (!m) return fallback
+    return isDoneLike(m.name, m.category_key) ? 'done' : m.category_key || fallback
+  }
 
   const toMs = (s) => (s ? new Date(s).getTime() : null)
   const scopeEvents = [] // { t, w }
@@ -801,7 +838,7 @@ export function burnup({ issues, cloudId = activeCloudId(), metric = 'count', fr
     scopeEvents.push({ t: created, w })
 
     const hist = (history.get(issue.id) || []).filter((h) => toMs(h.at) !== null)
-    let cat = hist.length ? catOf(hist[0].from_id, 'new') : issue.status_category || 'new'
+    let cat = hist.length ? catOf(hist[0].from_id, 'new') : categoryOf(issue)
     let firstDone = null
 
     if (cat === 'done') {
@@ -820,7 +857,7 @@ export function burnup({ issues, cloudId = activeCloudId(), metric = 'count', fr
       cat = next
     }
     // Current state wins when history is missing its final hop.
-    if (cat !== 'done' && issue.status_category === 'done') {
+    if (cat !== 'done' && categoryOf(issue) === 'done') {
       const t = toMs(issue.resolved) ?? toMs(issue.status_changed) ?? created
       doneEvents.push({ t: Math.max(t, created), w })
       if (firstDone === null) firstDone = Math.max(t, created)
@@ -899,11 +936,14 @@ export function graphTimeline({ issues, cloudId = activeCloudId(), maxStories = 
 
   const history = statusHistoryFor(cloudId, included.map((i) => i.id))
   const statusMeta = new Map(
-    db.prepare('SELECT id, category_key FROM statuses WHERE cloud_id = ?').all(cloudId)
-      .map((s) => [String(s.id), s.category_key])
+    db.prepare('SELECT id, name, category_key FROM statuses WHERE cloud_id = ?').all(cloudId)
+      .map((s) => [String(s.id), s])
   )
-  const catOf = (statusId, fallback = 'indeterminate') =>
-    statusMeta.get(String(statusId)) || fallback
+  const catOf = (statusId, fallback = 'indeterminate') => {
+    const m = statusMeta.get(String(statusId))
+    if (!m) return fallback
+    return isDoneLike(m.name, m.category_key) ? 'done' : m.category_key || fallback
+  }
   const toMs = (s) => (s ? new Date(s).getTime() : null)
 
   const nodes = included
@@ -911,7 +951,7 @@ export function graphTimeline({ issues, cloudId = activeCloudId(), maxStories = 
       const created = toMs(i.created)
       if (!created) return null
       const hist = (history.get(i.id) || []).filter((h) => toMs(h.at) !== null)
-      const initial = hist.length ? catOf(hist[0].from_id, 'new') : i.status_category || 'new'
+      const initial = hist.length ? catOf(hist[0].from_id, 'new') : categoryOf(i)
       const transitions = []
       let cat = initial
       for (const h of hist) {
@@ -920,8 +960,8 @@ export function graphTimeline({ issues, cloudId = activeCloudId(), maxStories = 
         transitions.push({ at: Math.max(toMs(h.at), created), cat: next })
         cat = next
       }
-      if (!hist.length && (i.status_category || 'new') !== initial) {
-        transitions.push({ at: toMs(i.status_changed) ?? created, cat: i.status_category })
+      if (!hist.length && categoryOf(i) !== initial) {
+        transitions.push({ at: toMs(i.status_changed) ?? created, cat: categoryOf(i) })
       }
       return {
         id: i.id,
@@ -1116,12 +1156,16 @@ export function cycleTime({ issues, groupBy = 'epic', from }) {
  * The delivery network: initiatives, epics and ideas as nodes; parent edges and
  * issue links as edges. Leaf work rolls up into each node's size/completion.
  */
-export function graphData({ issues, includeStories = false, maxStories = 120 }) {
+export function graphData({ issues, depth = 'epics', maxStories = 120 }) {
   const byId = new Map(issues.map((i) => [i.id, i]))
   const nodeSet = new Map()
 
+  // Drill level: initiatives only, initiatives + epics, or down to stories.
+  const minLevel = depth === 'initiatives' ? 2 : 1
+  const includeStories = depth === 'stories'
+
   for (const i of issues) {
-    if (i.hierarchy_level >= 1 || i.type_name === 'Idea') nodeSet.set(i.id, i)
+    if (i.hierarchy_level >= minLevel || i.type_name === 'Idea') nodeSet.set(i.id, i)
   }
 
   // Roll leaves up into every ancestor that is a node.
@@ -1131,7 +1175,7 @@ export function graphData({ issues, includeStories = false, maxStories = 120 }) 
     const r = rollups.get(nodeId)
     r.leaves += 1
     r.points += issue.story_points || 0
-    if (issue.status_category === 'done') r.done += 1
+    if (categoryOf(issue) === 'done') r.done += 1
   }
   for (const i of issues) {
     if (i.hierarchy_level >= 1) continue
@@ -1168,7 +1212,7 @@ export function graphData({ issues, includeStories = false, maxStories = 120 }) 
       type: i.type_name,
       level: i.hierarchy_level,
       project: i.project_key,
-      category: i.status_category,
+      category: categoryOf(i),
       assignee: i.assignee_name,
       leaves: r?.leaves ?? 0,
       done: r?.done ?? 0,
