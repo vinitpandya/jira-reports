@@ -16,6 +16,7 @@ import { templateFor } from './pageTemplates.js'
 import {
   resolveScope,
   summarise,
+  categoryOf,
   cumulativeFlow,
   buildTree,
   sankey,
@@ -233,7 +234,12 @@ router.get('/reports/summary', wrap(async (req, res) => {
   const metric = req.query.metric || 'count'
   res.json({
     ...summarise(issues, metric),
-    throughput: throughput({ issues, weeks: Number(req.query.weeks) || 12, from: req.query.from }),
+    throughput: throughput({
+      issues,
+      weeks: Number(req.query.weeks) || 12,
+      from: req.query.from,
+      state: String(req.query.throughputState || '') || undefined,
+    }),
   })
 }))
 
@@ -337,7 +343,7 @@ router.get('/reports/issues', wrap(async (req, res) => {
         type: i.type_name,
         level: i.hierarchy_level,
         status: i.status_name,
-        category: i.status_category,
+        category: categoryOf(i),
         assignee: i.assignee_name,
         project: i.project_key,
         points: i.story_points,

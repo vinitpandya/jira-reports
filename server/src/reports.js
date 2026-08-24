@@ -1247,8 +1247,13 @@ export function graphData({ issues, depth = 'epics', maxStories = 120 }) {
   return { nodes, edges, storiesDropped }
 }
 
-/** Issues resolved per week — the throughput companion to the CFD. */
-export function throughput({ issues: allIssues, weeks = 12, from }) {
+/**
+ * Arrivals into a state, per week. With no `state`, an item counts in the week
+ * it first became done-like (resolution date, or the done transition). With a
+ * `state` (a status name), it counts in the week it first entered that status,
+ * read from the change history.
+ */
+export function throughput({ issues: allIssues, weeks = 12, from, state, cloudId = activeCloudId() }) {
   const issues = workItems(allIssues)
   const now = Date.now()
   // A filter window overrides the default span: cover from `from` to now.
@@ -1267,10 +1272,30 @@ export function throughput({ issues: allIssues, weeks = 12, from }) {
   for (let w = weeks - 1; w >= 0; w -= 1) {
     buckets.set(dayKey(startOfWeek(now - w * 7 * DAY)), { week: dayKey(startOfWeek(now - w * 7 * DAY)), count: 0, points: 0 })
   }
+
+  /** First moment the issue entered the target, or null. */
+  let enteredAt
+  if (state) {
+    const history = statusHistoryFor(cloudId, issues.map((i) => i.id))
+    enteredAt = (i) => {
+      const hit = (history.get(i.id) || []).find((h) => (h.to_status || '') === state)
+      if (hit) return new Date(hit.at).getTime()
+      // In the state today with no recorded hop: date the last status change.
+      if (i.status_name === state) return new Date(i.status_changed || i.created).getTime()
+      return null
+    }
+  } else {
+    enteredAt = (i) => {
+      if (i.resolved) return new Date(i.resolved).getTime()
+      if (categoryOf(i) === 'done') return new Date(i.status_changed || i.updated || i.created).getTime()
+      return null
+    }
+  }
+
   for (const i of issues) {
-    if (!i.resolved) continue
-    const k = dayKey(startOfWeek(new Date(i.resolved).getTime()))
-    const b = buckets.get(k)
+    const t = enteredAt(i)
+    if (t === null || !Number.isFinite(t)) continue
+    const b = buckets.get(dayKey(startOfWeek(t)))
     if (b) {
       b.count += 1
       b.points += i.story_points || 0

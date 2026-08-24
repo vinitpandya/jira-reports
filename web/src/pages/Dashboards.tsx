@@ -14,6 +14,7 @@ import {
   WidgetQuickBar,
   bodyHeight,
   defaultTitle,
+  fieldChoices,
   widgetDef,
   type WidgetDef,
 } from '../dashboard/registry'
@@ -477,6 +478,7 @@ function WidgetEditor({
   onSave: (w: WidgetConfig) => void
   onClose: () => void
 }) {
+  const { catalog } = useScope()
   const def = widgetDef(widget.type)
   const [title, setTitle] = useState(widget.title ?? '')
   const [options, setOptions] = useState({ ...widget.options })
@@ -506,7 +508,7 @@ function WidgetEditor({
                 value={options[f.key] ?? ''}
                 onChange={(e) => setOptions({ ...options, [f.key]: e.target.value })}
               >
-                {f.choices?.map((c) => (
+                {fieldChoices(f, catalog).map((c) => (
                   <option key={c.value} value={c.value}>
                     {c.label}
                   </option>

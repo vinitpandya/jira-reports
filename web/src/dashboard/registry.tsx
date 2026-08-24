@@ -1,7 +1,9 @@
 import { rangeStart, useReport, useScope, type RangePreset } from '../lib/scope'
+import { makeColorScale } from '../lib/palette'
 import type {
   BreakdownData,
   BurnupData,
+  Catalog,
   Cfd,
   CrosstabData,
   ChordData,
@@ -48,6 +50,22 @@ export type FieldDef = {
   showIf?: (options: Record<string, string>) => boolean
   /** Also surface the field on the widget header as an inline quick control. */
   quick?: boolean
+  /** Choices resolved at render time from synced data instead of statically. */
+  dynamic?: 'statuses'
+}
+
+/** Resolve a field's choices, folding in catalog-driven (dynamic) lists. */
+export function fieldChoices(
+  f: FieldDef,
+  catalog: Catalog | null
+): { value: string; label: string }[] {
+  if (f.dynamic === 'statuses') {
+    return [
+      { value: '', label: 'Completed (done-like)' },
+      ...(catalog?.statuses ?? []).map((s) => ({ value: s.name, label: s.name })),
+    ]
+  }
+  return f.choices ?? []
 }
 
 export type WidgetDef = {
@@ -238,9 +256,16 @@ export const WIDGETS: WidgetDef[] = [
   {
     type: 'throughput',
     label: 'Throughput',
-    desc: 'Resolved per week',
+    desc: 'Arrivals into a state, per week',
     w: 6, h: 3, minW: 3, minH: 2,
     fields: [
+      {
+        key: 'state',
+        label: 'Count arrivals into',
+        kind: 'select',
+        dynamic: 'statuses',
+        quick: true,
+      },
       {
         key: 'field',
         label: 'Count',
@@ -493,10 +518,15 @@ export function WidgetQuickBar({
   widget: WidgetConfig
   onPatch: (patch: Record<string, string>) => void
 }) {
+  const { catalog } = useScope()
   const def = widgetDef(widget.type)
   if (!def) return null
   const quick = def.fields.filter(
-    (f) => f.quick && f.kind === 'select' && f.choices?.length && (!f.showIf || f.showIf(widget.options))
+    (f) =>
+      f.quick &&
+      f.kind === 'select' &&
+      (f.choices?.length || f.dynamic) &&
+      (!f.showIf || f.showIf(widget.options))
   )
   const supportsTable = TABLE_TYPES.has(widget.type)
   if (!quick.length && !supportsTable) return null
@@ -504,10 +534,12 @@ export function WidgetQuickBar({
   return (
     <span className="widget-quick" onPointerDown={(e) => e.stopPropagation()}>
       {quick.map((f) => {
-        const current = widget.options[f.key] ?? f.choices![0].value
-        return f.choices!.length <= 3 ? (
+        const choices = fieldChoices(f, catalog)
+        if (!choices.length) return null
+        const current = widget.options[f.key] ?? choices[0].value
+        return choices.length <= 3 ? (
           <span key={f.key} className="segmented" role="group" aria-label={f.label}>
-            {f.choices!.map((c) => (
+            {choices.map((c) => (
               <button
                 key={c.value}
                 type="button"
@@ -525,7 +557,7 @@ export function WidgetQuickBar({
             value={current}
             onChange={(e) => onPatch({ [f.key]: e.target.value })}
           >
-            {f.choices!.map((c) => (
+            {choices.map((c) => (
               <option key={c.value} value={c.value}>
                 {c.label}
               </option>
@@ -635,7 +667,10 @@ function CfdBody({ widget }: { widget: WidgetConfig }) {
 }
 
 function ThroughputBody({ widget }: { widget: WidgetConfig }) {
-  const { data } = useReport<Summary>('/reports/summary', widgetExtra(widget.options))
+  const { data } = useReport<Summary>('/reports/summary', {
+    ...widgetExtra(widget.options),
+    ...(widget.options.state ? { throughputState: widget.options.state } : {}),
+  })
   if (!data?.throughput?.length) return <Empty title="Nothing resolved yet" />
   return (
     <ThroughputBars
@@ -1029,31 +1064,52 @@ function TimelineGraphBody({ widget }: { widget: WidgetConfig }) {
   return <TemporalGraph data={data} height={Math.max(280, bodyHeight(widget.h) - 24)} />
 }
 
+const STATUS_PILL_COLOR: Record<string, string> = {
+  done: 'var(--status-good)',
+  indeterminate: 'var(--accent)',
+  new: 'var(--text-muted)',
+}
+
 function IssuesBody({ widget }: { widget: WidgetConfig }) {
   const { data } = useReport<{ total: number; issues: IssueRow[] }>('/reports/issues', {
     ...widgetExtra(widget.options),
     limit: 60,
   })
   if (!data?.issues?.length) return <Empty title="No issues in scope" />
+  const typeColor = makeColorScale([...new Set(data.issues.map((i) => i.type))].sort())
   return (
     <table className="data">
       <thead>
         <tr>
           <th>Key</th>
+          <th>Type</th>
           <th>Summary</th>
           <th>Status</th>
           <th>Assignee</th>
         </tr>
       </thead>
       <tbody>
-        {data.issues.map((i) => (
-          <tr key={i.key}>
-            <td>{i.key}</td>
-            <td className="wide" title={i.summary}>{i.summary.length > 46 ? `${i.summary.slice(0, 45)}…` : i.summary}</td>
-            <td><span className="pill">{i.status}</span></td>
-            <td>{i.assignee ?? '—'}</td>
-          </tr>
-        ))}
+        {data.issues.map((i) => {
+          const statusColor = STATUS_PILL_COLOR[i.category] ?? 'var(--text-muted)'
+          return (
+            <tr key={i.key}>
+              <td>{i.key}</td>
+              <td>
+                <span className="pill">
+                  <span className="dot" style={{ background: typeColor(i.type) }} />
+                  {i.type}
+                </span>
+              </td>
+              <td className="wide" title={i.summary}>{i.summary.length > 46 ? `${i.summary.slice(0, 45)}…` : i.summary}</td>
+              <td>
+                <span className="pill" style={{ color: statusColor, borderColor: statusColor, fontWeight: 600 }}>
+                  {i.status}
+                </span>
+              </td>
+              <td>{i.assignee ?? '—'}</td>
+            </tr>
+          )
+        })}
       </tbody>
     </table>
   )
