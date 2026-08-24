@@ -259,6 +259,7 @@ router.get('/reports/cfd', wrap(async (req, res) => {
       to: req.query.to,
       groupBy: req.query.groupBy === 'category' ? 'category' : 'status',
       metric: req.query.metric || 'count',
+      mergeDone: req.query.mergeDone !== 'false',
     })
   )
 }))

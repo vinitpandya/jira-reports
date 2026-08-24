@@ -248,6 +248,15 @@ export const WIDGETS: WidgetDef[] = [
         ],
         quick: true,
       },
+      {
+        key: 'mergeDone',
+        label: 'Completed statuses',
+        kind: 'select',
+        choices: [
+          { value: '', label: 'Merge done-like into one band' },
+          { value: 'false', label: 'Each status separate' },
+        ],
+      },
       METRIC_FIELD,
       WINDOW_FIELD,
       ...SCOPE_FIELDS,
@@ -654,6 +663,7 @@ function CfdBody({ widget }: { widget: WidgetConfig }) {
     ...widgetExtra(widget.options),
     groupBy: widget.options.groupBy === 'category' ? 'category' : 'status',
     leavesOnly: widget.options.leavesOnly === 'false' ? 'false' : 'true',
+    mergeDone: widget.options.mergeDone === 'false' ? 'false' : 'true',
   })
   if (!data || data.empty || data.series.length < 2) return <Empty title="Not enough history" />
   if (widget.options.view === 'table') return <CfdTable data={data} />

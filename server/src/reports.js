@@ -226,6 +226,8 @@ export function cumulativeFlow({
   to,
   groupBy = 'status',
   metric = 'count',
+  /** Fold every done-like status (done, cancelled, rejected, …) into one band. */
+  mergeDone = true,
 }) {
   if (!issues.length) return { series: [], keys: [], order: [], empty: true }
 
@@ -250,6 +252,7 @@ export function cumulativeFlow({
       const cat = catForStatus(statusId, statusName)
       return categoryLabel[cat] || cat
     }
+    if (mergeDone && catForStatus(statusId, statusName) === 'done') return 'Done'
     return statusMeta.get(String(statusId))?.name || statusName || 'Unknown'
   }
 
