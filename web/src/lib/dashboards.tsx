@@ -22,6 +22,8 @@ type Ctx = {
   create: (name: string, withStarter: boolean) => Promise<Dashboard>
   rename: (id: number, name: string) => Promise<void>
   remove: (id: number) => Promise<void>
+  /** Persist a new sidebar order (ids in display order). */
+  reorder: (ids: number[]) => Promise<void>
 }
 
 const DashboardsContext = createContext<Ctx | null>(null)
@@ -74,8 +76,21 @@ export function DashboardsProvider({ children }: { children: ReactNode }) {
     [refresh]
   )
 
+  const reorder = useCallback(
+    async (ids: number[]) => {
+      // Optimistic: rearrange locally, then persist.
+      setPages((prev) => {
+        const rank = new Map(ids.map((id, i) => [id, i]))
+        return [...prev].sort((a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999))
+      })
+      await api.put('/dashboards/order', { ids })
+      await refresh()
+    },
+    [refresh]
+  )
+
   return (
-    <DashboardsContext.Provider value={{ pages, loaded, refresh, create, rename, remove }}>
+    <DashboardsContext.Provider value={{ pages, loaded, refresh, create, rename, remove, reorder }}>
       {children}
     </DashboardsContext.Provider>
   )

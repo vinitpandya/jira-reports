@@ -1069,8 +1069,9 @@ function quantile(sorted, p) {
 }
 
 /** Days from created to resolved, grouped — the dot-plot's data. */
-export function cycleTime({ issues, groupBy = 'epic' }) {
+export function cycleTime({ issues, groupBy = 'epic', from }) {
   const byId = new Map(issues.map((i) => [i.id, i]))
+  const fromTs = from ? new Date(`${from}T00:00:00Z`).getTime() : null
 
   const groupOf = (issue) => {
     if (groupBy === 'assignee') return issue.assignee_name || 'Unassigned'
@@ -1082,6 +1083,7 @@ export function cycleTime({ issues, groupBy = 'epic' }) {
   const groups = new Map()
   for (const i of issues) {
     if (!i.resolved || !i.created || i.hierarchy_level > 0) continue
+    if (fromTs && new Date(i.resolved).getTime() < fromTs) continue
     const days = (new Date(i.resolved) - new Date(i.created)) / DAY
     if (!Number.isFinite(days) || days < 0) continue
     const key = groupOf(i)
@@ -1202,9 +1204,16 @@ export function graphData({ issues, includeStories = false, maxStories = 120 }) 
 }
 
 /** Issues resolved per week — the throughput companion to the CFD. */
-export function throughput({ issues: allIssues, weeks = 12 }) {
+export function throughput({ issues: allIssues, weeks = 12, from }) {
   const issues = workItems(allIssues)
   const now = Date.now()
+  // A filter window overrides the default span: cover from `from` to now.
+  if (from) {
+    const fromTs = new Date(`${from}T00:00:00Z`).getTime()
+    if (Number.isFinite(fromTs) && fromTs < now) {
+      weeks = Math.min(104, Math.max(1, Math.ceil((now - fromTs) / (7 * DAY))))
+    }
+  }
   const startOfWeek = (ts) => {
     const d = new Date(ts)
     const day = (d.getUTCDay() + 6) % 7 // Monday = 0

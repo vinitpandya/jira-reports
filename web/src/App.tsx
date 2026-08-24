@@ -196,10 +196,22 @@ function SlugRedirect({ slug }: { slug: string }) {
 }
 
 function PagesNav() {
-  const { pages, create } = useDashboards()
+  const { pages, create, reorder } = useDashboards()
   const navigate = useNavigate()
   const [creating, setCreating] = useState(false)
+  const [dragId, setDragId] = useState<number | null>(null)
+  const [overId, setOverId] = useState<number | null>(null)
   const custom = pages.filter((p) => !p.slug)
+
+  const drop = (targetId: number) => {
+    if (dragId == null || dragId === targetId) return
+    const ids = custom.map((p) => p.id)
+    const from = ids.indexOf(dragId)
+    const to = ids.indexOf(targetId)
+    if (from < 0 || to < 0) return
+    ids.splice(to, 0, ...ids.splice(from, 1))
+    void reorder(ids)
+  }
 
   return (
     <>
@@ -207,7 +219,37 @@ function PagesNav() {
         Pages
       </div>
       {custom.map((p) => (
-        <NavLink key={p.id} to={`/d/${p.id}`} className={({ isActive }) => (isActive ? 'active' : '')}>
+        <NavLink
+          key={p.id}
+          to={`/d/${p.id}`}
+          className={({ isActive }) => (isActive ? 'active' : '')}
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.setData('text/plain', String(p.id))
+            e.dataTransfer.effectAllowed = 'move'
+            setDragId(p.id)
+          }}
+          onDragEnd={() => {
+            setDragId(null)
+            setOverId(null)
+          }}
+          onDragOver={(e) => {
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'move'
+            setOverId(p.id)
+          }}
+          onDragLeave={() => setOverId((o) => (o === p.id ? null : o))}
+          onDrop={(e) => {
+            e.preventDefault()
+            setOverId(null)
+            drop(p.id)
+          }}
+          style={
+            overId === p.id && dragId != null && dragId !== p.id
+              ? { outline: '2px dashed var(--accent)', outlineOffset: -2 }
+              : undefined
+          }
+        >
           <IconGrid />
           {p.name}
         </NavLink>

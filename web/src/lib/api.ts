@@ -288,7 +288,13 @@ export type Dashboard = {
   updatedAt: number
 }
 
-export type DashboardMeta = { id: number; name: string; slug: string | null; updatedAt?: number }
+export type DashboardMeta = {
+  id: number
+  name: string
+  slug: string | null
+  sortOrder?: number
+  updatedAt?: number
+}
 
 export type Team = { id: number; name: string; sortOrder: number; archived: boolean }
 

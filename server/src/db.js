@@ -235,6 +235,9 @@ if (!db.prepare(`PRAGMA table_info(dashboards)`).all().some((c) => c.name === 's
 if (!db.prepare(`PRAGMA table_info(issues)`).all().some((c) => c.name === 'custom_fields')) {
   db.exec('ALTER TABLE issues ADD COLUMN custom_fields TEXT') // tracked extras, JSON {label: value}
 }
+if (!db.prepare(`PRAGMA table_info(dashboards)`).all().some((c) => c.name === 'sort_order')) {
+  db.exec('ALTER TABLE dashboards ADD COLUMN sort_order INTEGER DEFAULT 0') // nav order for custom pages
+}
 
 // report_entries v1 had UNIQUE(report_id, initiative_id) and no team column;
 // SQLite cannot drop a constraint, so rebuild the table once.

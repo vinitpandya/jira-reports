@@ -231,7 +231,7 @@ router.get('/reports/summary', wrap(async (req, res) => {
   const metric = req.query.metric || 'count'
   res.json({
     ...summarise(issues, metric),
-    throughput: throughput({ issues, weeks: Number(req.query.weeks) || 12 }),
+    throughput: throughput({ issues, weeks: Number(req.query.weeks) || 12, from: req.query.from }),
   })
 }))
 
@@ -365,7 +365,7 @@ router.get('/reports/cycletime', wrap(async (req, res) => {
   const groupBy = ['epic', 'assignee', 'project'].includes(req.query.groupBy)
     ? req.query.groupBy
     : 'epic'
-  res.json(cycleTime({ issues, groupBy }))
+  res.json(cycleTime({ issues, groupBy, from: req.query.from }))
 }))
 
 router.get('/reports/graph', wrap(async (req, res) => {
@@ -414,10 +414,29 @@ const dashboardRow = (row) => ({
 })
 
 router.get('/dashboards', wrap(async (req, res) => {
-  const rows = db.prepare('SELECT id, name, slug, updated_at FROM dashboards ORDER BY name').all()
+  const rows = db
+    .prepare('SELECT id, name, slug, sort_order, updated_at FROM dashboards ORDER BY sort_order, name')
+    .all()
   res.json({
-    dashboards: rows.map((r) => ({ id: r.id, name: r.name, slug: r.slug || null, updatedAt: r.updated_at })),
+    dashboards: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      slug: r.slug || null,
+      sortOrder: r.sort_order ?? 0,
+      updatedAt: r.updated_at,
+    })),
   })
+}))
+
+/** Persist the sidebar order of (custom) pages: sort_order = index. */
+router.put('/dashboards/order', wrap(async (req, res) => {
+  const ids = req.body?.ids
+  if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids must be an array' })
+  const stmt = db.prepare('UPDATE dashboards SET sort_order = ? WHERE id = ?')
+  db.transaction(() => {
+    ids.forEach((id, idx) => stmt.run(idx, Number(id)))
+  })()
+  res.json({ ok: true })
 }))
 
 router.get('/dashboards/:id', wrap(async (req, res) => {
@@ -430,9 +449,10 @@ router.post('/dashboards', wrap(async (req, res) => {
   const name = String(req.body?.name || '').trim() || 'Untitled dashboard'
   const layout = JSON.stringify(req.body?.layout ?? [])
   const now = Date.now()
+  const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM dashboards').get().m
   const info = db
-    .prepare('INSERT INTO dashboards (name, layout, created_at, updated_at) VALUES (?, ?, ?, ?)')
-    .run(name, layout, now, now)
+    .prepare('INSERT INTO dashboards (name, layout, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+    .run(name, layout, max + 1, now, now)
   const row = db.prepare('SELECT * FROM dashboards WHERE id = ?').get(info.lastInsertRowid)
   res.json(dashboardRow(row))
 }))

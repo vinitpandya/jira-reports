@@ -34,11 +34,11 @@ const RAG_CSS: Record<Rag, string> = {
 
 /** The epic fields that can be surfaced on entries, in display order. */
 const FIELD_CHOICES = [
+  'Start Date',
   'Estimation Need Date',
   'Requested Due Date',
-  'Start Date',
-  'Due Date',
   'Staging Date',
+  'Due Date',
   'Epic HL Estimation',
 ]
 const FIELDS_KEY = 'jira-reports.status.fields'
@@ -585,7 +585,9 @@ export function StatusReportPage() {
                 const slip = general ? dateSlip(general) : null
                 const isCollapsed = collapsed.has(`ws${g.initiativeId}`)
                 const groupFields = general?.fields
-                  ? shownFields.filter((f) => general.fields![f] !== undefined)
+                  ? FIELD_CHOICES.filter(
+                      (f) => shownFields.includes(f) && general.fields![f] !== undefined
+                    )
                   : []
                 return (
                   <section
@@ -734,10 +736,13 @@ export function StatusReportPage() {
                     {!isCollapsed && (
                       <>
                         {groupFields.length > 0 && (
-                          <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                            {groupFields
-                              .map((f) => `${f}: ${fieldValue(general!.fields![f])}`)
-                              .join(' · ')}
+                          <div className="field-list">
+                            {groupFields.map((f) => (
+                              <div key={f} className="field-list-row">
+                                <span className="field-list-label">{f}</span>
+                                <span>{fieldValue(general!.fields![f])}</span>
+                              </div>
+                            ))}
                           </div>
                         )}
                         {general && (
@@ -915,6 +920,7 @@ export function StatusReportPage() {
       {editingGroup && (
         <EditWorkstreamModal
           group={editingGroup}
+          initiative={initiatives.find((i) => i.id === editingGroup.initiativeId) ?? null}
           others={initiatives.filter((i) => !i.archived && i.id !== editingGroup.initiativeId)}
           onMerge={(targetId) => void mergeWorkstream(editingGroup.initiativeId, targetId)}
           onClose={() => setEditingGroup(null)}
@@ -953,7 +959,7 @@ function EntryCard({
 }) {
   const slip = dateSlip(entry)
   const fieldLine = entry.fields
-    ? shownFields.filter((f) => entry.fields![f] !== undefined)
+    ? FIELD_CHOICES.filter((f) => shownFields.includes(f) && entry.fields![f] !== undefined)
     : []
   return (
     <div className={nested ? 'status-entry nested' : 'card status-entry'}>
@@ -1029,8 +1035,13 @@ function EntryCard({
       </div>
 
       {fieldLine.length > 0 && (
-        <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-          {fieldLine.map((f) => `${f}: ${fieldValue(entry.fields![f])}`).join(' · ')}
+        <div className="field-list">
+          {fieldLine.map((f) => (
+            <div key={f} className="field-list-row">
+              <span className="field-list-label">{f}</span>
+              <span>{fieldValue(entry.fields![f])}</span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -1634,23 +1645,54 @@ function EditEntryModal({
 
 function EditWorkstreamModal({
   group,
+  initiative,
   others,
   onMerge,
   onClose,
   onSaved,
 }: {
   group: WorkstreamGroup
+  initiative: StatusInitiative | null
   others: StatusInitiative[]
   onMerge: (targetId: number) => void
   onClose: () => void
   onSaved: () => void
 }) {
   const [title, setTitle] = useState(group.title)
+  const [jiraKey, setJiraKey] = useState(initiative?.jiraKey ?? '')
   const [mergeInto, setMergeInto] = useState('')
+  const [q, setQ] = useState('')
+  const [results, setResults] = useState<Root[]>([])
+  const [searching, setSearching] = useState(false)
+
+  useEffect(() => {
+    if (!q.trim()) {
+      setResults([])
+      return
+    }
+    let cancelled = false
+    setSearching(true)
+    const t = window.setTimeout(() => {
+      api
+        .get<{ roots: Root[] }>('/roots', { q: q.trim(), level: 'any', limit: 10 })
+        .then((d) => {
+          if (!cancelled) setResults(d.roots)
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (!cancelled) setSearching(false)
+        })
+    }, 250)
+    return () => {
+      cancelled = true
+      window.clearTimeout(t)
+    }
+  }, [q])
 
   const save = async (archive?: boolean) => {
     await api.put(`/initiatives/${group.initiativeId}`, {
       title: title.trim(),
+      jiraKey: jiraKey.trim() || null,
       ...(archive !== undefined ? { archived: archive } : {}),
     })
     onSaved()
@@ -1664,6 +1706,44 @@ function EditWorkstreamModal({
         <div className="field">
           <label htmlFor="ew-title">Title</label>
           <input id="ew-title" type="text" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
+        </div>
+        <div className="field">
+          <label htmlFor="ew-key">Linked initiative / epic (Jira key)</label>
+          <input
+            id="ew-key"
+            type="text"
+            placeholder="e.g. PORT-101 — or search below"
+            value={jiraKey}
+            onChange={(e) => setJiraKey(e.target.value)}
+          />
+          <input
+            type="text"
+            placeholder="Search Jira by key or summary…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            style={{ marginTop: 6 }}
+          />
+          {searching && <span className="muted" style={{ fontSize: 12 }}>Searching…</span>}
+          {results.length > 0 && (
+            <div className="stack" style={{ gap: 2, marginTop: 6, maxHeight: 160, overflow: 'auto' }}>
+              {results.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  className="ghost"
+                  style={{ justifyContent: 'flex-start', textAlign: 'left' }}
+                  onClick={() => {
+                    setJiraKey(r.key)
+                    setQ('')
+                    setResults([])
+                  }}
+                >
+                  <span className="pill" style={{ marginRight: 6 }}>{r.key}</span>
+                  {r.summary}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <p className="muted" style={{ fontSize: 12, margin: 0 }}>
           Archiving keeps this week's entries but leaves the workstream out of future copy-forwards
