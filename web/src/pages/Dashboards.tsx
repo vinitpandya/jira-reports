@@ -409,7 +409,14 @@ export function DashboardPage() {
       {fullscreenId &&
         (() => {
           const w = active.layout.find((l) => l.i === fullscreenId)
-          return w ? <FullscreenWidget widget={w} onClose={() => setFullscreenId(null)} /> : null
+          return w ? (
+            <FullscreenWidget
+              widget={w}
+              onClose={() => setFullscreenId(null)}
+              onEdit={() => setEditing(w)}
+              onPatch={(patch) => patchWidget(w.i, patch)}
+            />
+          ) : null
         })()}
     </div>
   )
@@ -417,9 +424,21 @@ export function DashboardPage() {
 
 /**
  * A widget blown up to (almost) the whole viewport. The body is re-rendered
- * with a synthetic grid height sized to the screen, so charts scale up.
+ * with a synthetic grid height sized to the screen, so charts scale up. The
+ * header keeps the quick controls and the settings button, so the widget
+ * stays fully editable without leaving full screen.
  */
-function FullscreenWidget({ widget, onClose }: { widget: WidgetConfig; onClose: () => void }) {
+function FullscreenWidget({
+  widget,
+  onClose,
+  onEdit,
+  onPatch,
+}: {
+  widget: WidgetConfig
+  onClose: () => void
+  onEdit: () => void
+  onPatch: (patch: Record<string, string>) => void
+}) {
   useEffect(() => {
     const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     document.addEventListener('keydown', esc)
@@ -434,9 +453,13 @@ function FullscreenWidget({ widget, onClose }: { widget: WidgetConfig; onClose: 
   return createPortal(
     <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal fs" role="dialog" aria-label={widget.title || defaultTitle(widget)}>
-        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10, flexShrink: 0 }}>
+        <div className="row" style={{ gap: 10, marginBottom: 10, flexShrink: 0 }}>
           <h2 style={{ margin: 0, fontSize: 15 }}>{widget.title || defaultTitle(widget)}</h2>
-          <button type="button" className="ghost" onClick={onClose}>
+          <WidgetQuickBar widget={widget} onPatch={onPatch} />
+          <button type="button" className="ghost widget-btn" aria-label="Configure widget" onClick={onEdit}>
+            ⚙
+          </button>
+          <button type="button" className="ghost" style={{ flexShrink: 0 }} onClick={onClose}>
             Exit full screen ✕
           </button>
         </div>

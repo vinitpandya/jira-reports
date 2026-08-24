@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as d3 from 'd3'
-import { makeColorScale, ordinalRamp } from '../lib/palette'
+import { makeColorScale } from '../lib/palette'
 import { full, pct } from '../lib/format'
 import { Legend, Tooltip, useMeasure, useThemeVersion } from '../components/ui'
 import type { GraphData, GraphNode } from '../lib/api'
@@ -54,9 +54,12 @@ export function NetworkGraph({
 
   const colorOf = useMemo(() => {
     if (colorBy === 'status') {
-      // The ordered blue ramp, matching how state reads on the other charts.
-      const ramp = ordinalRamp(3)
-      const map: Record<string, string> = { 'To do': ramp[0], 'In progress': ramp[1], Done: ramp[2] }
+      // Semantic hues: an all-blue ramp is too easy to misread at a glance.
+      const map: Record<string, string> = {
+        'To do': 'var(--text-muted)',
+        'In progress': 'var(--accent)',
+        Done: 'var(--status-good)',
+      }
       return (k: string) => map[k] ?? 'var(--axis)'
     }
     const scale = makeColorScale(legendKeys.slice(0, 8))
