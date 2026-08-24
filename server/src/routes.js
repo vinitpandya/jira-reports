@@ -51,6 +51,10 @@ function scopeFrom(query) {
   })
 }
 
+/** Time window for snapshot reports: keep issues touched since `from`. */
+const activeSince = (issues, from) =>
+  from ? issues.filter((i) => (i.updated || i.created || '') >= from) : issues
+
 function wrap(handler) {
   return async (req, res) => {
     try {
@@ -275,7 +279,7 @@ router.get('/reports/sankey', wrap(async (req, res) => {
   const dims = csv(req.query.dimensions)
   res.json(
     sankey({
-      issues,
+      issues: activeSince(issues, req.query.from),
       dimensions: dims.length ? dims : ['assignee', 'epic', 'category'],
       metric: req.query.metric || 'count',
       maxPerColumn: Math.min(Number(req.query.maxPerColumn) || 12, 24),
@@ -287,7 +291,7 @@ router.get('/reports/breakdown', wrap(async (req, res) => {
   const { issues } = scopeFrom(req.query)
   res.json(
     breakdown({
-      issues,
+      issues: activeSince(issues, req.query.from),
       groupBy: String(req.query.groupBy || 'assignee'),
       metric: req.query.metric || 'count',
       max: Math.min(Number(req.query.max) || 30, 100),
@@ -299,7 +303,7 @@ router.get('/reports/crosstab', wrap(async (req, res) => {
   const { issues } = scopeFrom(req.query)
   res.json(
     crosstab({
-      issues,
+      issues: activeSince(issues, req.query.from),
       groupBy: String(req.query.groupBy || 'project'),
       stackBy: String(req.query.stackBy || 'type'),
       metric: req.query.metric || 'count',
@@ -326,7 +330,12 @@ router.get('/reports/timeseries', wrap(async (req, res) => {
 
 router.get('/reports/people', wrap(async (req, res) => {
   const { issues } = scopeFrom(req.query)
-  res.json({ people: peopleBreakdown({ issues, metric: req.query.metric || 'count' }) })
+  res.json({
+    people: peopleBreakdown({
+      issues: activeSince(issues, req.query.from),
+      metric: req.query.metric || 'count',
+    }),
+  })
 }))
 
 router.get('/reports/issues', wrap(async (req, res) => {
@@ -361,7 +370,7 @@ router.get('/reports/chord', wrap(async (req, res) => {
   const { issues, cloudId } = scopeFrom(req.query)
   res.json(
     chordFlows({
-      issues,
+      issues: activeSince(issues, req.query.from),
       cloudId,
       flow: req.query.flow === 'projects' ? 'projects' : 'handovers',
       maxEntities: Math.min(Number(req.query.maxEntities) || 8, 8),
@@ -403,6 +412,43 @@ router.get('/reports/burnup', wrap(async (req, res) => {
       from: req.query.from,
     })
   )
+}))
+
+/**
+ * The tracked date fields for the selected epics/initiatives (page roots),
+ * falling back to the containers in scope when nothing is selected.
+ */
+router.get('/reports/epic-dates', wrap(async (req, res) => {
+  const cloudId = activeCloudId()
+  if (!cloudId) return res.json({ epics: [] })
+  const keys = csv(req.query.roots)
+
+  let rows
+  if (keys.length) {
+    rows = db
+      .prepare(
+        `SELECT * FROM issues WHERE cloud_id = ? AND key IN (${keys.map(() => '?').join(',')})`
+      )
+      .all(cloudId, ...keys)
+    // Preserve the selection order.
+    rows.sort((a, b) => keys.indexOf(a.key) - keys.indexOf(b.key))
+  } else {
+    const { issues } = scopeFrom(req.query)
+    rows = issues
+      .filter((i) => i.hierarchy_level >= 1)
+      .sort((a, b) => a.hierarchy_level - b.hierarchy_level || a.key.localeCompare(b.key))
+      .slice(0, 12)
+  }
+
+  res.json({
+    epics: rows.map((i) => ({
+      key: i.key,
+      summary: i.summary,
+      status: i.status_name,
+      category: categoryOf(i),
+      fields: i.custom_fields ? JSON.parse(i.custom_fields) : {},
+    })),
+  })
 }))
 
 router.get('/reports/graph-timeline', wrap(async (req, res) => {

@@ -240,6 +240,16 @@ export type BreakdownData = {
   }[]
 }
 
+export type EpicDates = {
+  epics: {
+    key: string
+    summary: string
+    status: string
+    category: string
+    fields: Record<string, string | number>
+  }[]
+}
+
 export type CrosstabData = {
   groupBy: string
   stackBy: string

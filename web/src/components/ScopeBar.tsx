@@ -16,7 +16,7 @@ const LEVELS = [
  */
 export function ScopeBar() {
   const { scope, setScope, replaceScope, catalog } = useScope()
-  const [level, setLevel] = useState('2')
+  const level = scope.rootLevel || '2'
   const [roots, setRoots] = useState<Root[]>([])
   const [rootQuery, setRootQuery] = useState('')
   const [loadingRoots, setLoadingRoots] = useState(false)
@@ -94,7 +94,7 @@ export function ScopeBar() {
         width={240}
       />
 
-      <Select label="Report on" value={level} onChange={setLevel} width={150}>
+      <Select label="Report on" value={level} onChange={(v) => setScope({ rootLevel: v })} width={150}>
         {LEVELS.map((l) => (
           <option key={l.value} value={l.value}>
             {l.label}

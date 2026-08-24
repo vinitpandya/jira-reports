@@ -23,6 +23,8 @@ export type Scope = {
   statuses: string[]
   /** Drop everything done, cancelled, closed, rejected or deleted. */
   excludeDone: boolean
+  /** The "Report on" level driving the selection picker ('2', '1', 'idea', 'any'). */
+  rootLevel: string
 }
 
 export const DEFAULT_SCOPE: Scope = {
@@ -33,6 +35,7 @@ export const DEFAULT_SCOPE: Scope = {
   range: '90d',
   statuses: [],
   excludeDone: false,
+  rootLevel: '2',
 }
 
 const STORAGE_KEY = 'jira-reports.scope'

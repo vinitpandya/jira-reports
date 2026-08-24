@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as d3 from 'd3'
-import { ordinalRamp } from '../lib/palette'
 import { longDate } from '../lib/format'
 import { Legend, Tooltip, useMeasure, useThemeVersion } from '../components/ui'
 import type { TimelineGraphData, TimelineNode } from '../lib/api'
@@ -33,9 +32,9 @@ export function TemporalGraph({ data, height = 480 }: { data: TimelineGraphData;
   const [t, setT] = useState(extent[1])
   useEffect(() => setT(extent[1]), [extent])
 
-  const ramp = ordinalRamp(3)
+  // Semantic hues — an all-blue ramp made the states hard to tell apart.
   const colorFor = (cat: string) =>
-    cat === 'done' ? ramp[2] : cat === 'indeterminate' ? ramp[1] : ramp[0]
+    cat === 'done' ? 'var(--status-good)' : cat === 'indeterminate' ? 'var(--accent)' : 'var(--text-muted)'
   void themeVersion
 
   const sim = useMemo(() => {
@@ -266,9 +265,9 @@ export function TemporalGraph({ data, height = 480 }: { data: TimelineGraphData;
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <Legend
           items={[
-            { id: 'new', label: 'To do', color: ramp[0] },
-            { id: 'indeterminate', label: 'In progress', color: ramp[1] },
-            { id: 'done', label: 'Done', color: ramp[2] },
+            { id: 'new', label: 'To do', color: colorFor('new') },
+            { id: 'indeterminate', label: 'In progress', color: colorFor('indeterminate') },
+            { id: 'done', label: 'Done', color: colorFor('done') },
           ]}
         />
         <span className="muted" style={{ fontSize: 12, paddingTop: 12, flex: '0 0 auto' }}>

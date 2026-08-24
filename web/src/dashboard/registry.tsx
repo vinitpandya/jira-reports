@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { rangeStart, useReport, useScope, type RangePreset } from '../lib/scope'
 import { makeColorScale } from '../lib/palette'
 import type {
@@ -8,6 +9,7 @@ import type {
   CrosstabData,
   ChordData,
   CycleTimeData,
+  EpicDates,
   GraphData,
   IssueRow,
   Person,
@@ -37,7 +39,7 @@ import { ProgressLine, ProgressTable } from '../charts/ProgressLine'
 import { FlowInOut, FlowInOutTable } from '../charts/FlowInOut'
 import { Icicle } from '../charts/Icicle'
 import { TemporalGraph, TimelineTable } from '../charts/TemporalGraph'
-import { compact, full, metricLabel, pct } from '../lib/format'
+import { compact, full, longDate, metricLabel, pct } from '../lib/format'
 import { ROW_H, GAP } from './Grid'
 
 export type FieldDef = {
@@ -195,7 +197,7 @@ export const WIDGETS: WidgetDef[] = [
         showIf: hasAccumulation,
       },
       METRIC_FIELD,
-      { ...WINDOW_FIELD, showIf: isTimeChart },
+      WINDOW_FIELD,
       ...SCOPE_FIELDS,
     ],
   },
@@ -301,7 +303,7 @@ export const WIDGETS: WidgetDef[] = [
     label: 'People load',
     desc: 'Per-person stacked workload',
     w: 6, h: 4, minW: 4, minH: 3,
-    fields: [METRIC_FIELD, ...SCOPE_FIELDS],
+    fields: [METRIC_FIELD, WINDOW_FIELD, ...SCOPE_FIELDS],
   },
   {
     type: 'breakdown',
@@ -330,6 +332,7 @@ export const WIDGETS: WidgetDef[] = [
       },
       { key: 'to', label: 'To', kind: 'select', choices: DIMENSION_CHOICES },
       METRIC_FIELD,
+      WINDOW_FIELD,
       ...SCOPE_FIELDS,
     ],
   },
@@ -349,6 +352,7 @@ export const WIDGETS: WidgetDef[] = [
         ],
         quick: true,
       },
+      WINDOW_FIELD,
       ...SCOPE_FIELDS,
     ],
   },
@@ -366,6 +370,20 @@ export const WIDGETS: WidgetDef[] = [
           { value: 'epic', label: 'Epic' },
           { value: 'assignee', label: 'Assignee' },
           { value: 'project', label: 'Project' },
+        ],
+        quick: true,
+      },
+      {
+        key: 'show',
+        label: 'Show',
+        kind: 'select',
+        choices: [
+          { value: '', label: 'Fit to widget (slowest first)' },
+          { value: 'all', label: 'All' },
+          { value: 'slow5', label: 'Slowest 5' },
+          { value: 'slow10', label: 'Slowest 10' },
+          { value: 'fast5', label: 'Fastest 5' },
+          { value: 'fast10', label: 'Fastest 10' },
         ],
         quick: true,
       },
@@ -438,6 +456,13 @@ export const WIDGETS: WidgetDef[] = [
     label: 'Issue list',
     desc: 'Most recently updated issues',
     w: 6, h: 4, minW: 4, minH: 3,
+    fields: SCOPE_FIELDS,
+  },
+  {
+    type: 'epic-dates',
+    label: 'Epic dates',
+    desc: 'Tracked date fields for the selected epics',
+    w: 4, h: 3, minW: 3, minH: 2,
     fields: SCOPE_FIELDS,
   },
   {
@@ -602,6 +627,7 @@ export function WidgetBody({ widget }: { widget: WidgetConfig }) {
     case 'burnup': return <BurnupBody widget={widget} />
     case 'flow-io': return <FlowIoBody widget={widget} />
     case 'issues': return <IssuesBody widget={widget} />
+    case 'epic-dates': return <EpicDatesBody widget={widget} />
     case 'icicle': return <IcicleBody widget={widget} />
     case 'timeline-graph': return <TimelineGraphBody widget={widget} />
     default: return <Empty title={`Unknown widget "${widget.type}"`} />
@@ -997,6 +1023,83 @@ function ChordBody({ widget }: { widget: WidgetConfig }) {
   )
 }
 
+const EPIC_FIELD_ORDER = [
+  'Start Date',
+  'Estimation Need Date',
+  'Requested Due Date',
+  'Staging Date',
+  'Due Date',
+  'Epic HL Estimation',
+]
+
+function EpicDatesBody({ widget }: { widget: WidgetConfig }) {
+  const { siteUrl } = useScope()
+  const [tab, setTab] = useState(0)
+  const { data } = useReport<EpicDates>('/reports/epic-dates', widgetExtra(widget.options))
+  if (!data) return null
+  if (!data.epics.length) return <Empty title="Select an epic or initiative in the filter row" />
+
+  const active = data.epics[Math.min(tab, data.epics.length - 1)]
+  const fields = EPIC_FIELD_ORDER.filter((f) => active.fields[f] !== undefined)
+  const fmt = (v: string | number) =>
+    typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) ? longDate(v.slice(0, 10)) : String(v)
+  const statusColor = STATUS_PILL_COLOR[active.category] ?? 'var(--text-muted)'
+
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      {data.epics.length > 1 && (
+        <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+          {data.epics.map((e, i) => (
+            <button
+              key={e.key}
+              type="button"
+              className="pill"
+              aria-pressed={i === Math.min(tab, data.epics.length - 1)}
+              style={
+                i === Math.min(tab, data.epics.length - 1)
+                  ? { color: 'var(--accent)', borderColor: 'var(--accent)', fontWeight: 600 }
+                  : undefined
+              }
+              onClick={() => setTab(i)}
+            >
+              {e.key}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        {siteUrl ? (
+          <a className="pill" href={`${siteUrl}/browse/${active.key}`} target="_blank" rel="noreferrer">
+            {active.key}
+          </a>
+        ) : (
+          <span className="pill">{active.key}</span>
+        )}
+        <strong style={{ fontSize: 13 }}>{active.summary}</strong>
+        <span className="pill" style={{ color: statusColor, borderColor: statusColor, fontWeight: 600 }}>
+          {active.status}
+        </span>
+      </div>
+
+      {fields.length ? (
+        <div className="field-list" style={{ fontSize: 12.5 }}>
+          {fields.map((f) => (
+            <div key={f} className="field-list-row">
+              <span className="field-list-label">{f}</span>
+              <span>{fmt(active.fields[f])}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+          No tracked dates synced for this item yet — run a full sync after connecting Jira.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function CycleTimeBody({ widget }: { widget: WidgetConfig }) {
   const groupBy = widget.options.groupBy || 'epic'
   const { data } = useReport<CycleTimeData>('/reports/cycletime', {
@@ -1005,7 +1108,21 @@ function CycleTimeBody({ widget }: { widget: WidgetConfig }) {
   })
   if (!data?.rows?.length) return <Empty title="Not enough resolved issues" />
   if (widget.options.view === 'table') return <CycleTimeTable data={data} />
-  return <DotPlot data={data} max={Math.max(3, Math.floor((bodyHeight(widget.h) - 60) / 30))} />
+  // Row selection: fit (slowest-first, as many as the widget holds), all,
+  // or a top/bottom slice — the server sorts slowest first.
+  const show = widget.options.show || ''
+  let rows = data.rows
+  let max: number | undefined = Math.max(3, Math.floor((bodyHeight(widget.h) - 60) / 30))
+  if (show === 'all') {
+    max = undefined
+  } else if (show.startsWith('slow')) {
+    rows = data.rows.slice(0, Number(show.slice(4)) || 10)
+    max = undefined
+  } else if (show.startsWith('fast')) {
+    rows = [...data.rows].reverse().slice(0, Number(show.slice(4)) || 10)
+    max = undefined
+  }
+  return <DotPlot data={{ ...data, rows }} max={max} />
 }
 
 function GraphBody({ widget }: { widget: WidgetConfig }) {

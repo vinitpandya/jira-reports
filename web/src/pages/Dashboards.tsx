@@ -98,19 +98,35 @@ export function DashboardPage() {
   }, [id, replaceScope])
 
   // Persist filter edits back onto the page (debounced, skipping the load itself).
+  const pendingScopeSave = useRef<{ id: number; scope: Scope } | null>(null)
   useEffect(() => {
     if (!active || !scopeReady.current) return
     const serialized = JSON.stringify(scope)
     if (serialized === lastSavedScope.current) return
     window.clearTimeout(scopeSaveTimer.current)
+    pendingScopeSave.current = { id: active.id, scope }
     scopeSaveTimer.current = window.setTimeout(() => {
       lastSavedScope.current = serialized
+      pendingScopeSave.current = null
       api.put(`/dashboards/${active.id}`, { scope }).catch((err) => {
         setError(String((err as Error).message))
       })
     }, 600)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope])
+
+  // Navigating away before the debounce fires must not lose the filter edit.
+  useEffect(
+    () => () => {
+      window.clearTimeout(scopeSaveTimer.current)
+      const p = pendingScopeSave.current
+      if (p) {
+        pendingScopeSave.current = null
+        api.put(`/dashboards/${p.id}`, { scope: p.scope }).catch(() => undefined)
+      }
+    },
+    []
+  )
 
   const persist = useCallback((dashboard: Dashboard) => {
     window.clearTimeout(saveTimer.current)
