@@ -163,11 +163,28 @@ export function DashboardPage() {
 
   const resetPage = async () => {
     if (!active) return
-    if (!window.confirm(`Reset "${active.name}" to its original layout? Your changes to this page are discarded.`)) return
+    const what = active.slug ? 'its original layout' : 'the default layout'
+    if (!window.confirm(`Reset "${active.name}" to ${what}? Your changes to this page are discarded.`)) return
     try {
       const d = await api.post<Dashboard>(`/dashboards/${active.id}/reset`)
       setActive(d)
       await refresh()
+    } catch (err) {
+      setError(String((err as Error).message))
+    }
+  }
+
+  const saveAsDefault = async () => {
+    if (!active) return
+    if (
+      !window.confirm(
+        `Make this page's layout the default? New pages and "Reset layout" on custom pages will use it.`
+      )
+    ) {
+      return
+    }
+    try {
+      await api.put('/default-layout', { layout: active.layout })
     } catch (err) {
       setError(String((err as Error).message))
     }
@@ -282,11 +299,18 @@ export function DashboardPage() {
           <button type="button" className="ghost" onClick={() => setRenaming(true)}>
             Rename
           </button>
-          {active.slug ? (
-            <button type="button" className="ghost" onClick={() => void resetPage()}>
-              Reset layout
-            </button>
-          ) : (
+          <button type="button" className="ghost" onClick={() => void resetPage()}>
+            Reset layout
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            title="Use this layout for new pages and custom-page resets"
+            onClick={() => void saveAsDefault()}
+          >
+            Save as default
+          </button>
+          {!active.slug && (
             <button type="button" className="ghost danger" onClick={() => void removePage()}>
               Delete page
             </button>

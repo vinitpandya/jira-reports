@@ -37,6 +37,7 @@ import { DotPlot, CycleTimeTable } from '../charts/DotPlot'
 import { NetworkGraph, GraphTable } from '../charts/NetworkGraph'
 import { ProgressLine, ProgressTable } from '../charts/ProgressLine'
 import { FlowInOut, FlowInOutTable } from '../charts/FlowInOut'
+import { Burndown } from '../charts/Burndown'
 import { Icicle } from '../charts/Icicle'
 import { TemporalGraph, TimelineTable } from '../charts/TemporalGraph'
 import { compact, full, longDate, metricLabel, pct } from '../lib/format'
@@ -430,6 +431,35 @@ export const WIDGETS: WidgetDef[] = [
     fields: [METRIC_FIELD, WINDOW_FIELD, ...SCOPE_FIELDS],
   },
   {
+    type: 'burndown',
+    label: 'Burn down',
+    desc: 'Remaining work, with a due-date projection',
+    w: 6, h: 4, minW: 4, minH: 3,
+    fields: [
+      METRIC_FIELD,
+      WINDOW_FIELD,
+      {
+        key: 'dueMode',
+        label: 'Due date',
+        kind: 'select',
+        choices: [
+          { value: 'closest', label: 'Closest epic due date' },
+          { value: 'furthest', label: 'Furthest epic due date' },
+          { value: 'fixed', label: 'Specific date' },
+        ],
+        quick: true,
+      },
+      {
+        key: 'dueDate',
+        label: 'Due date (YYYY-MM-DD)',
+        kind: 'text',
+        placeholder: 'e.g. 2026-12-31',
+        showIf: (o) => o.dueMode === 'fixed',
+      },
+      ...SCOPE_FIELDS,
+    ],
+  },
+  {
     type: 'flow-io',
     label: 'Added vs completed',
     desc: 'Weekly scope in against work out',
@@ -625,6 +655,7 @@ export function WidgetBody({ widget }: { widget: WidgetConfig }) {
     case 'cycletime': return <CycleTimeBody widget={widget} />
     case 'graph': return <GraphBody widget={widget} />
     case 'burnup': return <BurnupBody widget={widget} />
+    case 'burndown': return <BurndownBody widget={widget} />
     case 'flow-io': return <FlowIoBody widget={widget} />
     case 'issues': return <IssuesBody widget={widget} />
     case 'epic-dates': return <EpicDatesBody widget={widget} />
@@ -1154,6 +1185,39 @@ function BurnupBody({ widget }: { widget: WidgetConfig }) {
       data={data}
       metric={effectiveMetric(widget.options, scope.metric)}
       height={Math.max(180, bodyHeight(widget.h) - 24)}
+    />
+  )
+}
+
+function BurndownBody({ widget }: { widget: WidgetConfig }) {
+  const { scope } = useScope()
+  const { data } = useReport<BurnupData>('/reports/burnup', widgetExtra(widget.options))
+  const dueMode = widget.options.dueMode || 'closest'
+  // Epic due dates come from the tracked fields of the selected roots.
+  const { data: epics } = useReport<EpicDates>(
+    dueMode === 'fixed' ? null : '/reports/epic-dates',
+    widgetExtra(widget.options)
+  )
+  if (!data || data.empty || data.series.length < 2) return <Empty title="Not enough history" />
+
+  let dueDate: string | null = null
+  if (dueMode === 'fixed') {
+    dueDate = /^\d{4}-\d{2}-\d{2}$/.test(widget.options.dueDate || '') ? widget.options.dueDate : null
+  } else {
+    const dates = (epics?.epics ?? [])
+      .map((e) => e.fields['Due Date'])
+      .filter((v): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v))
+      .map((v) => v.slice(0, 10))
+      .sort()
+    if (dates.length) dueDate = dueMode === 'furthest' ? dates[dates.length - 1] : dates[0]
+  }
+
+  return (
+    <Burndown
+      data={data}
+      metric={effectiveMetric(widget.options, scope.metric)}
+      dueDate={dueDate}
+      height={Math.max(200, bodyHeight(widget.h) - 56)}
     />
   )
 }

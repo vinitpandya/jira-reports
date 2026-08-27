@@ -12,7 +12,7 @@ import {
   activeCloudId,
 } from './oauth.js'
 import { runSync, syncStatus, cancelSync } from './sync.js'
-import { templateFor } from './pageTemplates.js'
+import { templateFor, defaultPageLayout, instantiateLayout } from './pageTemplates.js'
 import {
   resolveScope,
   summarise,
@@ -507,7 +507,9 @@ router.get('/dashboards/:id', wrap(async (req, res) => {
 
 router.post('/dashboards', wrap(async (req, res) => {
   const name = String(req.body?.name || '').trim() || 'Untitled dashboard'
-  const layout = JSON.stringify(req.body?.layout ?? [])
+  const layout = JSON.stringify(
+    req.body?.withDefault ? instantiateLayout(defaultPageLayout()) : req.body?.layout ?? []
+  )
   const now = Date.now()
   const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM dashboards').get().m
   const info = db
@@ -560,15 +562,35 @@ router.delete('/dashboards/:id', wrap(async (req, res) => {
   res.json({ ok: true })
 }))
 
-/** Restore a built-in page to its shipped layout. */
+/** Restore a page's layout: built-ins to their template, custom pages to the default layout. */
 router.post('/dashboards/:id/reset', wrap(async (req, res) => {
   const row = db.prepare('SELECT * FROM dashboards WHERE id = ?').get(req.params.id)
   if (!row) return res.status(404).json({ error: 'No such dashboard' })
   const template = row.slug ? templateFor(row.slug) : null
-  if (!template) return res.status(400).json({ error: 'Only built-in pages have a template to reset to' })
+  const name = template ? template.name : row.name
+  const layout = template ? template.layout : instantiateLayout(defaultPageLayout())
   db.prepare('UPDATE dashboards SET name = ?, layout = ?, updated_at = ? WHERE id = ?')
-    .run(template.name, JSON.stringify(template.layout), Date.now(), row.id)
+    .run(name, JSON.stringify(layout), Date.now(), row.id)
   res.json(dashboardRow(db.prepare('SELECT * FROM dashboards WHERE id = ?').get(row.id)))
+}))
+
+/* ---------------------------------------------------------- default layout */
+
+router.get('/default-layout', wrap(async (req, res) => {
+  res.json({ layout: defaultPageLayout(), custom: !!getConfig('default_layout', null) })
+}))
+
+/** Save (or clear, with null) the default layout new pages and resets use. */
+router.put('/default-layout', wrap(async (req, res) => {
+  const layout = req.body?.layout
+  if (layout === null) {
+    setConfig('default_layout', null)
+  } else if (Array.isArray(layout) && layout.length) {
+    setConfig('default_layout', layout)
+  } else {
+    return res.status(400).json({ error: 'layout must be a non-empty array, or null to restore the shipped default' })
+  }
+  res.json({ layout: defaultPageLayout(), custom: !!getConfig('default_layout', null) })
 }))
 
 /* --------------------------------------------------------- weekly status */

@@ -1,4 +1,32 @@
-import { db } from './db.js'
+import crypto from 'node:crypto'
+import { db, getConfig } from './db.js'
+
+/**
+ * The shipped default layout for new custom pages (and custom-page resets).
+ * The user can replace it via "Save as default layout" (stored in app_config).
+ */
+export const DEFAULT_PAGE_LAYOUT = [
+  { type: 'stat', title: '', x: 0, y: 0, w: 3, h: 2, options: { kind: 'percent' } },
+  { type: 'stat', title: '', x: 3, y: 0, w: 3, h: 2, options: { kind: 'issues' } },
+  { type: 'stat', title: '', x: 6, y: 0, w: 3, h: 2, options: { kind: 'inprogress' } },
+  { type: 'stat', title: '', x: 9, y: 0, w: 3, h: 2, options: { kind: 'people' } },
+  { type: 'cfd', title: '', x: 0, y: 2, w: 6, h: 5, options: { groupBy: 'status' } },
+  { type: 'throughput', title: '', x: 6, y: 2, w: 6, h: 3, options: { field: 'count' } },
+  { type: 'flow-io', title: '', x: 6, y: 5, w: 6, h: 4, options: { style: 'cumulative' } },
+  { type: 'burnup', title: '', x: 0, y: 7, w: 6, h: 4, options: {} },
+  { type: 'issues', title: '', x: 6, y: 9, w: 6, h: 4, options: {} },
+]
+
+/** The effective default layout: the user's saved one, else the shipped one. */
+export function defaultPageLayout() {
+  const stored = getConfig('default_layout', null)
+  return Array.isArray(stored) && stored.length ? stored : DEFAULT_PAGE_LAYOUT
+}
+
+/** A fresh copy with new widget ids, ready to store on a page. */
+export function instantiateLayout(layout) {
+  return layout.map((w) => ({ ...w, i: crypto.randomUUID() }))
+}
 
 /**
  * The built-in report pages, expressed as dashboard layouts so they are fully

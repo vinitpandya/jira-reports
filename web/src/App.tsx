@@ -304,7 +304,7 @@ function NewPageModal({
         </div>
         <label className="row" style={{ gap: 8, fontSize: 13, cursor: 'pointer' }}>
           <input type="checkbox" checked={starter} onChange={(e) => setStarter(e.target.checked)} />
-          Start with a few useful widgets
+          Start with the default layout
         </label>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="ghost" onClick={onClose}>
