@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { api, type AuthStatus, type Project, type Site } from '../lib/api'
+import { api, type AuthStatus, type Project, type Site, type StatusMapping } from '../lib/api'
 import { useScope } from '../lib/scope'
 import { Card, Banner, Meter } from '../components/ui'
 import { duration, full, relative } from '../lib/format'
@@ -393,7 +393,128 @@ export function Settings() {
             </p>
           )}
         </Card>
+
+        {catalog?.ready && <WorkflowStatesCard />}
       </div>
     </div>
+  )
+}
+
+/* ------------------------------------------------------- workflow states */
+
+const CATEGORY_OPTIONS = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'new', label: 'To do' },
+  { value: 'indeterminate', label: 'In progress' },
+  { value: 'done', label: 'Done' },
+]
+
+const CATEGORY_LABEL: Record<string, string> = {
+  new: 'To do',
+  indeterminate: 'In progress',
+  done: 'Done',
+}
+
+/**
+ * Group statuses into to do / in progress / done for every report. "Auto"
+ * uses Jira's category plus the done-like name rule; an override pins it.
+ */
+function WorkflowStatesCard() {
+  const { reload } = useScope()
+  const [mapping, setMapping] = useState<StatusMapping | null>(null)
+  const [overrides, setOverrides] = useState<Record<string, string>>({})
+  const [dirty, setDirty] = useState(false)
+  const [savingMap, setSavingMap] = useState(false)
+  const [savedNote, setSavedNote] = useState(false)
+
+  const loadMapping = useCallback(async () => {
+    const d = await api.get<StatusMapping>('/status-mapping')
+    setMapping(d)
+    setOverrides(
+      Object.fromEntries(d.statuses.filter((s) => s.override).map((s) => [s.name, s.override!]))
+    )
+    setDirty(false)
+  }, [])
+
+  useEffect(() => {
+    void loadMapping()
+  }, [loadMapping])
+
+  const save = async () => {
+    setSavingMap(true)
+    try {
+      await api.put('/status-mapping', { overrides })
+      await loadMapping()
+      reload() // refetch every report with the new grouping
+      setSavedNote(true)
+      window.setTimeout(() => setSavedNote(false), 1800)
+    } finally {
+      setSavingMap(false)
+    }
+  }
+
+  if (!mapping?.statuses.length) return null
+
+  return (
+    <Card
+      title="Workflow states"
+      sub="Group your statuses into to do / in progress / done — e.g. count “QA Done” as done. Auto follows Jira's category plus the done-like name rule."
+      actions={
+        <button type="button" className="primary" disabled={!dirty || savingMap} onClick={() => void save()}>
+          {savedNote ? 'Saved ✓' : savingMap ? 'Saving…' : 'Save mapping'}
+        </button>
+      }
+    >
+      <table className="data" style={{ maxWidth: 680 }}>
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th style={{ textAlign: 'right' }}>Issues</th>
+            <th>Counts as</th>
+          </tr>
+        </thead>
+        <tbody>
+          {mapping.statuses.map((s) => {
+            const current = overrides[s.name] ?? 'auto'
+            return (
+              <tr key={s.name}>
+                <td>
+                  {s.name}
+                  {current === 'auto' && (
+                    <span className="muted" style={{ fontSize: 11.5 }}>
+                      {'  '}→ {CATEGORY_LABEL[s.effective] ?? s.effective}
+                    </span>
+                  )}
+                </td>
+                <td className="num">{full(s.count)}</td>
+                <td>
+                  <div className="segmented" role="group" aria-label={`Category for ${s.name}`}>
+                    {CATEGORY_OPTIONS.map((o) => (
+                      <button
+                        key={o.value}
+                        type="button"
+                        aria-pressed={current === o.value}
+                        style={{ padding: '3px 8px', fontSize: 11.5 }}
+                        onClick={() => {
+                          setOverrides((prev) => {
+                            const next = { ...prev }
+                            if (o.value === 'auto') delete next[s.name]
+                            else next[s.name] = o.value
+                            return next
+                          })
+                          setDirty(true)
+                        }}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </Card>
   )
 }

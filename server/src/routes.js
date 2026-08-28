@@ -17,6 +17,9 @@ import {
   resolveScope,
   summarise,
   categoryOf,
+  categoryOverrides,
+  categoryForStatusName,
+  invalidateCategoryOverrides,
   cumulativeFlow,
   buildTree,
   sankey,
@@ -528,6 +531,48 @@ router.put('/dashboards/:id', wrap(async (req, res) => {
   db.prepare('UPDATE dashboards SET name = ?, layout = ?, scope = ?, updated_at = ? WHERE id = ?')
     .run(name, layout, scope, Date.now(), row.id)
   res.json(dashboardRow(db.prepare('SELECT * FROM dashboards WHERE id = ?').get(row.id)))
+}))
+
+/* --------------------------------------------------------- status mapping */
+
+/** Every synced status with Jira's category, the effective one, and any override. */
+router.get('/status-mapping', wrap(async (req, res) => {
+  const cloudId = activeCloudId()
+  const rows = cloudId
+    ? db
+        .prepare(
+          `SELECT status_name AS name, status_category AS category, COUNT(*) AS n
+           FROM issues WHERE cloud_id = ? AND status_name IS NOT NULL
+           GROUP BY status_name, status_category ORDER BY n DESC`
+        )
+        .all(cloudId)
+    : []
+  const overrides = categoryOverrides()
+  res.json({
+    statuses: rows.map((r) => ({
+      name: r.name,
+      jiraCategory: r.category,
+      effective: categoryForStatusName(r.name, r.category),
+      override: overrides[r.name.trim().toLowerCase()] ?? null,
+      count: r.n,
+    })),
+  })
+}))
+
+/** Replace the override map: { "QA Done": "done", ... }; null values clear. */
+router.put('/status-mapping', wrap(async (req, res) => {
+  const incoming = req.body?.overrides
+  if (!incoming || typeof incoming !== 'object') {
+    return res.status(400).json({ error: 'overrides must be an object of status -> category' })
+  }
+  const valid = new Set(['new', 'indeterminate', 'done'])
+  const cleaned = {}
+  for (const [name, cat] of Object.entries(incoming)) {
+    if (cat !== null && valid.has(cat)) cleaned[name] = cat
+  }
+  setConfig('status_category_overrides', cleaned)
+  invalidateCategoryOverrides()
+  res.json({ ok: true })
 }))
 
 /* ---------------------------------------------------------- saved filters */

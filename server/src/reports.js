@@ -1,4 +1,4 @@
-import { db } from './db.js'
+import { db, getConfig } from './db.js'
 import { activeCloudId } from './oauth.js'
 
 const DAY = 86_400_000
@@ -20,16 +20,43 @@ function placeholders(n) {
 /**
  * "Completed" means done, cancelled, closed, rejected or deleted — some of
  * those live under non-done Jira categories, so the name gets a say too.
+ * On top of that, the user can pin any status to a category ("QA Done" is
+ * done); those overrides live in app_config and win over everything.
  */
 const DONE_LIKE = /cancel|close|reject|delet/i
-export function isDoneLike(statusName, statusCategory) {
-  return statusCategory === 'done' || DONE_LIKE.test(statusName || '')
+const VALID_CATEGORIES = new Set(['new', 'indeterminate', 'done'])
+
+let overridesCache = null
+/** User overrides: lowercased status name -> 'new' | 'indeterminate' | 'done'. */
+export function categoryOverrides() {
+  if (!overridesCache) {
+    const raw = getConfig('status_category_overrides', {}) || {}
+    overridesCache = {}
+    for (const [name, cat] of Object.entries(raw)) {
+      if (VALID_CATEGORIES.has(cat)) overridesCache[name.trim().toLowerCase()] = cat
+    }
+  }
+  return overridesCache
+}
+export function invalidateCategoryOverrides() {
+  overridesCache = null
 }
 
-/** Effective progress category for an issue, folding done-like names into done. */
+/** Effective category for a status name, given Jira's category as fallback. */
+export function categoryForStatusName(statusName, statusCategory) {
+  const o = categoryOverrides()[(statusName || '').trim().toLowerCase()]
+  if (o) return o
+  if (statusCategory === 'done' || DONE_LIKE.test(statusName || '')) return 'done'
+  return statusCategory || 'indeterminate'
+}
+
+export function isDoneLike(statusName, statusCategory) {
+  return categoryForStatusName(statusName, statusCategory) === 'done'
+}
+
+/** Effective progress category for an issue. */
 export function categoryOf(issue) {
-  if (isDoneLike(issue.status_name, issue.status_category)) return 'done'
-  return issue.status_category || 'new'
+  return categoryForStatusName(issue.status_name, issue.status_category || 'new')
 }
 
 export function resolveScope({
@@ -243,8 +270,7 @@ export function cumulativeFlow({
 
   const catForStatus = (statusId, statusName) => {
     const m = statusMeta.get(String(statusId))
-    if (isDoneLike(statusName || m?.name, m?.category_key)) return 'done'
-    return m?.category_key || 'indeterminate'
+    return categoryForStatusName(statusName || m?.name, m?.category_key || 'indeterminate')
   }
 
   const labelFor = (statusId, statusName) => {
@@ -823,7 +849,7 @@ export function burnup({ issues, cloudId = activeCloudId(), metric = 'count', fr
   const catOf = (statusId, fallback = 'indeterminate') => {
     const m = statusMeta.get(String(statusId))
     if (!m) return fallback
-    return isDoneLike(m.name, m.category_key) ? 'done' : m.category_key || fallback
+    return categoryForStatusName(m.name, m.category_key || fallback)
   }
 
   const toMs = (s) => (s ? new Date(s).getTime() : null)
@@ -945,7 +971,7 @@ export function graphTimeline({ issues, cloudId = activeCloudId(), maxStories = 
   const catOf = (statusId, fallback = 'indeterminate') => {
     const m = statusMeta.get(String(statusId))
     if (!m) return fallback
-    return isDoneLike(m.name, m.category_key) ? 'done' : m.category_key || fallback
+    return categoryForStatusName(m.name, m.category_key || fallback)
   }
   const toMs = (s) => (s ? new Date(s).getTime() : null)
 

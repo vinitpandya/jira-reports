@@ -240,6 +240,16 @@ export type BreakdownData = {
   }[]
 }
 
+export type StatusMapping = {
+  statuses: {
+    name: string
+    jiraCategory: string | null
+    effective: string
+    override: string | null
+    count: number
+  }[]
+}
+
 export type EpicDates = {
   epics: {
     key: string
