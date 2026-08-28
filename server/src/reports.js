@@ -767,7 +767,10 @@ export function timeseries({
 
   const events = []
   for (const i of workItems(issues)) {
-    const date = mode === 'created' ? i.created : i.resolved
+    const date =
+      mode === 'created'
+        ? i.created
+        : i.resolved || (categoryOf(i) === 'done' ? i.status_changed : null)
     if (!date) continue
     const w = metricValue(i, metric)
     if (!w) continue
@@ -1151,9 +1154,13 @@ export function cycleTime({ issues, groupBy = 'epic', from }) {
 
   const groups = new Map()
   for (const i of issues) {
-    if (!i.resolved || !i.created || i.hierarchy_level > 0) continue
-    if (fromTs && new Date(i.resolved).getTime() < fromTs) continue
-    const days = (new Date(i.resolved) - new Date(i.created)) / DAY
+    if (!i.created || i.hierarchy_level > 0) continue
+    // Done means the mapped category: an item finished in "QA Done" without a
+    // resolution still counts, dated by its last status change.
+    const doneAt = i.resolved || (categoryOf(i) === 'done' ? i.status_changed : null)
+    if (!doneAt) continue
+    if (fromTs && new Date(doneAt).getTime() < fromTs) continue
+    const days = (new Date(doneAt) - new Date(i.created)) / DAY
     if (!Number.isFinite(days) || days < 0) continue
     const key = groupOf(i)
     if (!groups.has(key)) groups.set(key, [])

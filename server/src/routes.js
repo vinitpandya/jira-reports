@@ -170,6 +170,8 @@ router.get('/catalog', wrap(async (req, res) => {
     `SELECT status_name AS name, status_category AS category, COUNT(*) AS n
      FROM issues WHERE cloud_id = ? GROUP BY status_name, status_category ORDER BY n DESC`
   ).all(cloudId)
+    // Labels follow the effective (user-mapped) category, not Jira's raw one.
+    .map((s) => ({ ...s, category: categoryForStatusName(s.name, s.category) }))
 
   const projects = db.prepare(
     `SELECT key, name, type_key, n FROM (
