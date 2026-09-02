@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import * as d3 from 'd3'
 import { longDate } from '../lib/format'
 import { Legend, Tooltip, useMeasure, useThemeVersion } from '../components/ui'
+import { DataGrid } from '../components/DataGrid'
 import { IssueLink } from '../components/IssueLink'
 import type { TimelineGraphData, TimelineNode } from '../lib/api'
 
@@ -304,33 +305,41 @@ function catLabel(cat: string) {
 }
 
 export function TimelineTable({ data }: { data: TimelineGraphData }) {
-  const rows = [...data.nodes].sort((a, b) => a.created - b.created)
   return (
-    <div className="table-scroll">
-      <table className="data">
-        <thead>
-          <tr>
-            <th>Key</th>
-            <th>Type</th>
-            <th>Created</th>
-            <th>Transitions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((n) => (
-            <tr key={n.id}>
-              <td><IssueLink issueKey={n.key} /></td>
-              <td>{n.type}</td>
-              <td>{longDate(new Date(n.created))}</td>
-              <td className="wide">
-                {n.transitions.length
-                  ? n.transitions.map((tr) => `${longDate(new Date(tr.at))}: ${catLabel(tr.cat)}`).join(' · ')
-                  : catLabel(n.initial)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataGrid
+      rows={data.nodes}
+      rowKey={(n) => n.id}
+      storageKey="timeline"
+      defaultSort={{ key: 'created', dir: 'asc' }}
+      columns={[
+        { key: 'key', label: 'Key', value: (n) => n.key, render: (n) => <IssueLink issueKey={n.key} />, groupable: false },
+        { key: 'type', label: 'Type', value: (n) => n.type },
+        { key: 'project', label: 'Project', value: (n) => n.project },
+        {
+          key: 'created',
+          label: 'Created',
+          value: (n) => n.created,
+          render: (n) => longDate(new Date(n.created)),
+          groupable: false,
+        },
+        {
+          key: 'state',
+          label: 'Current state',
+          value: (n) => catLabel(n.transitions.length ? n.transitions[n.transitions.length - 1].cat : n.initial),
+        },
+        {
+          key: 'transitions',
+          label: 'Transitions',
+          value: (n) => n.transitions.length,
+          render: (n) =>
+            n.transitions.length
+              ? n.transitions.map((tr) => `${longDate(new Date(tr.at))}: ${catLabel(tr.cat)}`).join(' · ')
+              : catLabel(n.initial),
+          wide: true,
+          groupable: false,
+          aggregate: 'none',
+        },
+      ]}
+    />
   )
 }

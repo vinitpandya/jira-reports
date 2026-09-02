@@ -3,6 +3,7 @@ import * as d3 from 'd3'
 import { ordinalRamp } from '../lib/palette'
 import { full } from '../lib/format'
 import { Legend, Tooltip, useMeasure, useThemeVersion } from '../components/ui'
+import { DataGrid, type GridColumn } from '../components/DataGrid'
 import { LinkedName } from '../components/IssueLink'
 import type { CycleTimeData } from '../lib/api'
 
@@ -148,34 +149,32 @@ function truncate(s: string, n: number) {
 }
 
 export function CycleTimeTable({ data }: { data: CycleTimeData }) {
+  type Row = CycleTimeData['rows'][number]
+  const days = (n: number) => n.toFixed(1)
+  const stat = (key: keyof Row & string, label: string, agg: 'avg' | 'sum' | 'none' = 'avg'): GridColumn<Row> => ({
+    key,
+    label,
+    value: (r) => r[key] as number,
+    align: 'right',
+    render: (r) => days(r[key] as number),
+    aggregate: agg,
+    format: days,
+  })
   return (
-    <div className="table-scroll">
-      <table className="data">
-        <thead>
-          <tr>
-            <th>Group</th>
-            <th style={{ textAlign: 'right' }}>Resolved</th>
-            <th style={{ textAlign: 'right' }}>Median (d)</th>
-            <th style={{ textAlign: 'right' }}>p90 (d)</th>
-            <th style={{ textAlign: 'right' }}>Mean (d)</th>
-            <th style={{ textAlign: 'right' }}>Min</th>
-            <th style={{ textAlign: 'right' }}>Max</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.rows.map((r) => (
-            <tr key={r.name}>
-              <td className="wide"><LinkedName name={r.name} /></td>
-              <td className="num">{r.n}</td>
-              <td className="num">{r.p50.toFixed(1)}</td>
-              <td className="num">{r.p90.toFixed(1)}</td>
-              <td className="num">{r.mean.toFixed(1)}</td>
-              <td className="num">{r.min.toFixed(0)}</td>
-              <td className="num">{r.max.toFixed(0)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataGrid
+      rows={data.rows}
+      rowKey={(r) => r.name}
+      storageKey="cycletime"
+      defaultSort={{ key: 'p50', dir: 'desc' }}
+      columns={[
+        { key: 'name', label: 'Group', value: (r) => r.name, render: (r) => <LinkedName name={r.name} />, wide: true },
+        { key: 'n', label: 'Resolved', value: (r) => r.n, align: 'right' },
+        stat('p50', 'Median (d)'),
+        stat('p90', 'p90 (d)'),
+        stat('mean', 'Mean (d)'),
+        { ...stat('min', 'Min', 'none'), render: (r) => r.min.toFixed(0) },
+        { ...stat('max', 'Max', 'none'), render: (r) => r.max.toFixed(0) },
+      ]}
+    />
   )
 }

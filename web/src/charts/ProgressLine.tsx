@@ -2,6 +2,7 @@ import { useState } from 'react'
 import * as d3 from 'd3'
 import { full, longDate, pct, shortDate } from '../lib/format'
 import { Tooltip, useMeasure } from '../components/ui'
+import { DataGrid } from '../components/DataGrid'
 import type { BurnupData } from '../lib/api'
 
 const M = { top: 14, right: 58, bottom: 28, left: 44 }
@@ -190,29 +191,26 @@ function unitName(metric: string) {
 }
 
 export function ProgressTable({ data }: { data: BurnupData }) {
-  const rows = [...data.series].reverse()
   return (
-    <div className="table-scroll">
-      <table className="data">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th style={{ textAlign: 'right' }}>In scope</th>
-            <th style={{ textAlign: 'right' }}>Done</th>
-            <th style={{ textAlign: 'right' }}>Complete</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((p) => (
-            <tr key={p.date}>
-              <td>{p.date}</td>
-              <td className="num">{full(p.scope)}</td>
-              <td className="num">{full(p.done)}</td>
-              <td className="num">{pct(p.pct)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataGrid
+      rows={data.series}
+      rowKey={(p) => p.date}
+      storageKey="progress"
+      defaultSort={{ key: 'date', dir: 'desc' }}
+      columns={[
+        { key: 'date', label: 'Date', value: (p) => p.date, groupable: false },
+        { key: 'scope', label: 'In scope', value: (p) => p.scope, align: 'right', render: (p) => full(p.scope) },
+        { key: 'done', label: 'Done', value: (p) => p.done, align: 'right', render: (p) => full(p.done) },
+        {
+          key: 'pct',
+          label: 'Complete',
+          value: (p) => p.pct,
+          align: 'right',
+          render: (p) => pct(p.pct),
+          aggregate: 'avg',
+          format: (n) => pct(n),
+        },
+      ]}
+    />
   )
 }

@@ -3,6 +3,7 @@ import * as d3 from 'd3'
 import { makeColorScale } from '../lib/palette'
 import { full, pct } from '../lib/format'
 import { Legend, Tooltip, useMeasure, useThemeVersion } from '../components/ui'
+import { DataGrid } from '../components/DataGrid'
 import { IssueLink } from '../components/IssueLink'
 import type { GraphData, GraphNode } from '../lib/api'
 
@@ -269,26 +270,20 @@ export function NetworkGraph({
 
 export function GraphTable({ data }: { data: GraphData }) {
   const byId = new Map(data.nodes.map((n) => [n.id, n]))
+  const keyOf = (id: string) => byId.get(id)?.key ?? id
+  const relation = (e: GraphData['edges'][number]) => (e.kind === 'parent' ? 'contains' : e.label || 'links to')
   return (
-    <div className="table-scroll">
-      <table className="data">
-        <thead>
-          <tr>
-            <th>From</th>
-            <th>Relation</th>
-            <th>To</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.edges.map((e, i) => (
-            <tr key={i}>
-              <td><IssueLink issueKey={byId.get(e.source)?.key ?? e.source} /></td>
-              <td>{e.kind === 'parent' ? 'contains' : e.label || 'links to'}</td>
-              <td><IssueLink issueKey={byId.get(e.target)?.key ?? e.target} /></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataGrid
+      rows={data.edges}
+      rowKey={(e) => `${e.source}-${e.target}-${e.kind}`}
+      storageKey="graph"
+      columns={[
+        { key: 'from', label: 'From', value: (e) => keyOf(e.source), render: (e) => <IssueLink issueKey={keyOf(e.source)} /> },
+        { key: 'fromType', label: 'From type', value: (e) => byId.get(e.source)?.type ?? '—' },
+        { key: 'relation', label: 'Relation', value: relation },
+        { key: 'to', label: 'To', value: (e) => keyOf(e.target), render: (e) => <IssueLink issueKey={keyOf(e.target)} /> },
+        { key: 'toType', label: 'To type', value: (e) => byId.get(e.target)?.type ?? '—' },
+      ]}
+    />
   )
 }

@@ -1008,3 +1008,43 @@ select.rag-paused { color: var(--text-muted); }
     padding-right: 16px;
   }
 }
+
+/* ---------------------------------------------------------- data grids */
+
+.grid-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.grid-toolbar select {
+  font-size: 12px;
+  padding: 2px 6px;
+  margin-left: 4px;
+}
+table.data th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+table.data th.sortable:hover {
+  color: var(--text-primary);
+}
+table.data .sort-mark {
+  margin-left: 4px;
+  font-size: 9px;
+  color: var(--accent);
+}
+table.data tr.group-row td {
+  background: var(--surface-2);
+  font-weight: 600;
+  cursor: pointer;
+}
+table.data tr.group-row .group-toggle {
+  display: inline-block;
+  width: 14px;
+  color: var(--text-muted);
+}

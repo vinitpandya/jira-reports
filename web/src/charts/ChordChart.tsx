@@ -3,6 +3,7 @@ import * as d3 from 'd3'
 import { makeColorScale } from '../lib/palette'
 import { full } from '../lib/format'
 import { Legend, Tooltip, useMeasure, useThemeVersion } from '../components/ui'
+import { DataGrid } from '../components/DataGrid'
 import type { ChordData } from '../lib/api'
 
 /**
@@ -170,27 +171,17 @@ function truncate(s: string, n: number) {
 
 export function ChordTable({ data, unitLabel = 'handovers' }: { data: ChordData; unitLabel?: string }) {
   const name = (id: string) => data.entities.find((e) => e.id === id)?.name ?? id
-  const rows = [...data.flows].sort((a, b) => b.value - a.value)
   return (
-    <div className="table-scroll">
-      <table className="data">
-        <thead>
-          <tr>
-            <th>From</th>
-            <th>To</th>
-            <th style={{ textAlign: 'right' }}>{unitLabel}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((f, i) => (
-            <tr key={i}>
-              <td>{name(f.source)}</td>
-              <td>{name(f.target)}</td>
-              <td className="num">{full(f.value)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataGrid
+      rows={data.flows}
+      rowKey={(f) => `${f.source} ${f.target}`}
+      storageKey="chord"
+      defaultSort={{ key: 'value', dir: 'desc' }}
+      columns={[
+        { key: 'from', label: 'From', value: (f) => name(f.source) },
+        { key: 'to', label: 'To', value: (f) => name(f.target) },
+        { key: 'value', label: unitLabel, value: (f) => f.value, align: 'right', render: (f) => full(f.value) },
+      ]}
+    />
   )
 }

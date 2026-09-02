@@ -3,7 +3,8 @@ import * as d3 from 'd3'
 import { makeColorScale, ordinalRamp, MAX_ORDINAL_STEPS } from '../lib/palette'
 import { compact, full, longDate, shortDate } from '../lib/format'
 import { Legend, Tooltip, useMeasure, useThemeVersion, type TooltipRow } from '../components/ui'
-import type { Cfd } from '../lib/api'
+import { DataGrid, type GridColumn } from '../components/DataGrid'
+import type { Cfd, CfdPoint } from '../lib/api'
 
 const M = { top: 10, right: 96, bottom: 30, left: 52 }
 
@@ -264,35 +265,31 @@ export function CumulativeFlow({
 }
 
 export function CfdTable({ data }: { data: Cfd }) {
-  const rows = [...data.series].reverse()
+  const num = (p: CfdPoint, k: string) => Number(p[k]) || 0
+  const columns: GridColumn<CfdPoint>[] = [
+    { key: 'date', label: 'Date', value: (p) => String(p.date), groupable: false },
+    ...data.keys.map<GridColumn<CfdPoint>>((k) => ({
+      key: `k:${k}`,
+      label: k,
+      value: (p) => num(p, k),
+      align: 'right',
+      render: (p) => full(num(p, k)),
+    })),
+    {
+      key: 'total',
+      label: 'Total',
+      value: (p) => data.keys.reduce((s, k) => s + num(p, k), 0),
+      align: 'right',
+      render: (p) => full(data.keys.reduce((s, k) => s + num(p, k), 0)),
+    },
+  ]
   return (
-    <div className="table-scroll">
-      <table className="data">
-        <thead>
-          <tr>
-            <th>Date</th>
-            {data.keys.map((k) => (
-              <th key={k} style={{ textAlign: 'right' }}>
-                {k}
-              </th>
-            ))}
-            <th style={{ textAlign: 'right' }}>Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((p) => (
-            <tr key={String(p.date)}>
-              <td>{p.date}</td>
-              {data.keys.map((k) => (
-                <td key={k} className="num">
-                  {full(Number(p[k]) || 0)}
-                </td>
-              ))}
-              <td className="num">{full(data.keys.reduce((s, k) => s + (Number(p[k]) || 0), 0))}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataGrid
+      rows={data.series}
+      rowKey={(p) => String(p.date)}
+      storageKey="cfd"
+      defaultSort={{ key: 'date', dir: 'desc' }}
+      columns={columns}
+    />
   )
 }

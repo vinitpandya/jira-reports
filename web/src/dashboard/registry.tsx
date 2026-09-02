@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { rangeStart, useReport, useScope, type RangePreset } from '../lib/scope'
 import { IssueLink, LinkedName } from '../components/IssueLink'
+import { DataGrid } from '../components/DataGrid'
 import { makeColorScale } from '../lib/palette'
 import type {
   BreakdownData,
@@ -764,31 +765,43 @@ function TopItemsBody({ widget }: { widget: WidgetConfig }) {
   if (!rows.length) return <Empty title="No parent items in scope" />
   if (widget.options.view === 'table') {
     return (
-      <table className="data">
-        <thead>
-          <tr>
-            <th>Item</th>
-            <th style={{ textAlign: 'right' }}>To do</th>
-            <th style={{ textAlign: 'right' }}>In progress</th>
-            <th style={{ textAlign: 'right' }}>Done</th>
-            <th style={{ textAlign: 'right' }}>%</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data!.tree.map((n) => (
-            <tr key={n.id}>
-              <td className="wide" title={`${n.key} ${n.summary}`}>
-                <IssueLink issueKey={n.key} />{' '}
-                {n.summary.length > 34 ? `${n.summary.slice(0, 33)}…` : n.summary}
-              </td>
-              <td className="num">{full(n.rollup.todo)}</td>
-              <td className="num">{full(n.rollup.inProgress)}</td>
-              <td className="num">{full(n.rollup.done)}</td>
-              <td className="num">{pct(n.rollup.percent)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <DataGrid
+        rows={data!.tree}
+        rowKey={(n) => n.id}
+        storageKey="top-items"
+        defaultSort={{ key: 'total', dir: 'desc' }}
+        columns={[
+          {
+            key: 'item',
+            label: 'Item',
+            value: (n) => `${n.key} ${n.summary}`,
+            render: (n) => (
+              <>
+                <IssueLink issueKey={n.key} /> {n.summary.length > 34 ? `${n.summary.slice(0, 33)}…` : n.summary}
+              </>
+            ),
+            wide: true,
+            groupable: false,
+            title: (n) => `${n.key} ${n.summary}`,
+          },
+          { key: 'type', label: 'Type', value: (n) => n.type },
+          { key: 'status', label: 'Status', value: (n) => n.status },
+          { key: 'assignee', label: 'Assignee', value: (n) => n.assignee },
+          { key: 'todo', label: 'To do', value: (n) => n.rollup.todo, align: 'right', render: (n) => full(n.rollup.todo) },
+          { key: 'inprogress', label: 'In progress', value: (n) => n.rollup.inProgress, align: 'right', render: (n) => full(n.rollup.inProgress) },
+          { key: 'done', label: 'Done', value: (n) => n.rollup.done, align: 'right', render: (n) => full(n.rollup.done) },
+          { key: 'total', label: 'Total', value: (n) => n.rollup.total, align: 'right', render: (n) => full(n.rollup.total) },
+          {
+            key: 'pct',
+            label: '%',
+            value: (n) => n.rollup.percent,
+            align: 'right',
+            render: (n) => pct(n.rollup.percent),
+            aggregate: 'avg',
+            format: (v) => pct(v),
+          },
+        ]}
+      />
     )
   }
   return <BreakdownBars rows={rows} metric={effectiveMetric(widget.options, scope.metric)} />
@@ -809,28 +822,20 @@ function PeopleLoadBody({ widget }: { widget: WidgetConfig }) {
   if (!rows.length) return <Empty title="Nobody has work here" />
   if (widget.options.view === 'table') {
     return (
-      <table className="data">
-        <thead>
-          <tr>
-            <th>Person</th>
-            <th style={{ textAlign: 'right' }}>Issues</th>
-            <th style={{ textAlign: 'right' }}>To do</th>
-            <th style={{ textAlign: 'right' }}>In progress</th>
-            <th style={{ textAlign: 'right' }}>Done</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data!.people.map((p) => (
-            <tr key={p.id}>
-              <td>{p.name}</td>
-              <td className="num">{p.issues}</td>
-              <td className="num">{full(p.todo)}</td>
-              <td className="num">{full(p.inProgress)}</td>
-              <td className="num">{full(p.done)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <DataGrid
+        rows={data!.people}
+        rowKey={(p) => p.id}
+        storageKey="people-load"
+        defaultSort={{ key: 'issues', dir: 'desc' }}
+        columns={[
+          { key: 'name', label: 'Person', value: (p) => p.name },
+          { key: 'issues', label: 'Issues', value: (p) => p.issues, align: 'right' },
+          { key: 'todo', label: 'To do', value: (p) => p.todo, align: 'right', render: (p) => full(p.todo) },
+          { key: 'inprogress', label: 'In progress', value: (p) => p.inProgress, align: 'right', render: (p) => full(p.inProgress) },
+          { key: 'done', label: 'Done', value: (p) => p.done, align: 'right', render: (p) => full(p.done) },
+          { key: 'total', label: 'Total', value: (p) => p.total, align: 'right', render: (p) => full(p.total) },
+        ]}
+      />
     )
   }
   return (
@@ -926,28 +931,27 @@ function ChartGroupedBody({ widget, kind }: { widget: WidgetConfig; kind: string
 
   if (kind === 'table') {
     return (
-      <table className="data">
-        <thead>
-          <tr>
-            <th>{DIMENSION_CHOICES.find((c) => c.value === data.groupBy)?.label ?? 'Group'}</th>
-            <th style={{ textAlign: 'right' }}>To do</th>
-            <th style={{ textAlign: 'right' }}>In progress</th>
-            <th style={{ textAlign: 'right' }}>Done</th>
-            <th style={{ textAlign: 'right' }}>Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.rows.map((r) => (
-            <tr key={r.id}>
-              <td className="wide" title={r.name}><LinkedName name={r.name} max={40} /></td>
-              <td className="num">{full(r.todo)}</td>
-              <td className="num">{full(r.inProgress)}</td>
-              <td className="num">{full(r.done)}</td>
-              <td className="num">{full(r.total)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <DataGrid
+        rows={data.rows}
+        rowKey={(r) => r.id}
+        storageKey={`chart-${data.groupBy}`}
+        defaultSort={{ key: 'total', dir: 'desc' }}
+        columns={[
+          {
+            key: 'name',
+            label: DIMENSION_CHOICES.find((c) => c.value === data.groupBy)?.label ?? 'Group',
+            value: (r) => r.name,
+            render: (r) => <LinkedName name={r.name} max={40} />,
+            wide: true,
+            title: (r) => r.name,
+          },
+          { key: 'issues', label: 'Issues', value: (r) => r.issues, align: 'right' },
+          { key: 'todo', label: 'To do', value: (r) => r.todo, align: 'right', render: (r) => full(r.todo) },
+          { key: 'inprogress', label: 'In progress', value: (r) => r.inProgress, align: 'right', render: (r) => full(r.inProgress) },
+          { key: 'done', label: 'Done', value: (r) => r.done, align: 'right', render: (r) => full(r.done) },
+          { key: 'total', label: 'Total', value: (r) => r.total, align: 'right', render: (r) => full(r.total) },
+        ]}
+      />
     )
   }
 
@@ -1270,40 +1274,48 @@ function IssuesBody({ widget }: { widget: WidgetConfig }) {
   })
   if (!data?.issues?.length) return <Empty title="No issues in scope" />
   const typeColor = makeColorScale([...new Set(data.issues.map((i) => i.type))].sort())
+  const statusColor = (i: IssueRow) => STATUS_PILL_COLOR[i.category] ?? 'var(--text-muted)'
   return (
-    <table className="data">
-      <thead>
-        <tr>
-          <th>Key</th>
-          <th>Type</th>
-          <th>Summary</th>
-          <th>Status</th>
-          <th>Assignee</th>
-        </tr>
-      </thead>
-      <tbody>
-        {data.issues.map((i) => {
-          const statusColor = STATUS_PILL_COLOR[i.category] ?? 'var(--text-muted)'
-          return (
-            <tr key={i.key}>
-              <td><IssueLink issueKey={i.key} /></td>
-              <td>
-                <span className="pill">
-                  <span className="dot" style={{ background: typeColor(i.type) }} />
-                  {i.type}
-                </span>
-              </td>
-              <td className="wide" title={i.summary}>{i.summary.length > 46 ? `${i.summary.slice(0, 45)}…` : i.summary}</td>
-              <td>
-                <span className="pill" style={{ color: statusColor, borderColor: statusColor, fontWeight: 600 }}>
-                  {i.status}
-                </span>
-              </td>
-              <td>{i.assignee ?? '—'}</td>
-            </tr>
-          )
-        })}
-      </tbody>
-    </table>
+    <DataGrid
+      rows={data.issues}
+      rowKey={(i) => i.key}
+      storageKey="issues"
+      columns={[
+        { key: 'key', label: 'Key', value: (i) => i.key, render: (i) => <IssueLink issueKey={i.key} />, groupable: false },
+        {
+          key: 'type',
+          label: 'Type',
+          value: (i) => i.type,
+          render: (i) => (
+            <span className="pill">
+              <span className="dot" style={{ background: typeColor(i.type) }} />
+              {i.type}
+            </span>
+          ),
+        },
+        {
+          key: 'summary',
+          label: 'Summary',
+          value: (i) => i.summary,
+          render: (i) => (i.summary.length > 46 ? `${i.summary.slice(0, 45)}…` : i.summary),
+          wide: true,
+          groupable: false,
+          title: (i) => i.summary,
+        },
+        {
+          key: 'status',
+          label: 'Status',
+          value: (i) => i.status,
+          render: (i) => (
+            <span className="pill" style={{ color: statusColor(i), borderColor: statusColor(i), fontWeight: 600 }}>
+              {i.status}
+            </span>
+          ),
+        },
+        { key: 'assignee', label: 'Assignee', value: (i) => i.assignee },
+        { key: 'project', label: 'Project', value: (i) => i.project },
+        { key: 'points', label: 'Points', value: (i) => i.points, align: 'right', render: (i) => (i.points != null ? full(i.points) : '—') },
+      ]}
+    />
   )
 }

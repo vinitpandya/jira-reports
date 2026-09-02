@@ -3,6 +3,7 @@ import { sankey as d3sankey, sankeyLinkHorizontal, sankeyJustify } from 'd3-sank
 import { makeColorScale } from '../lib/palette'
 import { compact, full } from '../lib/format'
 import { Legend, Tooltip, useMeasure, useThemeVersion } from '../components/ui'
+import { DataGrid } from '../components/DataGrid'
 import { LinkedName } from '../components/IssueLink'
 import type { SankeyData } from '../lib/api'
 
@@ -246,30 +247,25 @@ function truncate(s: string, n: number) {
 export function SankeyTable({ data, metric }: { data: SankeyData; metric: string }) {
   const byId = new Map(data.nodes.map((n) => [n.id, n]))
   const unit = metric === 'timespent' ? 'h' : ''
-  const rows = [...data.links].sort((a, b) => b.value - a.value)
+  const nameOf = (id: string) => byId.get(id)?.name ?? id
   return (
-    <div className="table-scroll">
-      <table className="data">
-        <thead>
-          <tr>
-            <th>From</th>
-            <th>To</th>
-            <th style={{ textAlign: 'right' }}>{metricName(metric)}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((l, i) => (
-            <tr key={i}>
-              <td className="wide"><LinkedName name={byId.get(l.source)?.name ?? l.source} /></td>
-              <td className="wide"><LinkedName name={byId.get(l.target)?.name ?? l.target} /></td>
-              <td className="num">
-                {full(l.value)}
-                {unit}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataGrid
+      rows={data.links}
+      rowKey={(l) => `${l.source} ${l.target}`}
+      storageKey="sankey"
+      defaultSort={{ key: 'value', dir: 'desc' }}
+      columns={[
+        { key: 'from', label: 'From', value: (l) => nameOf(l.source), render: (l) => <LinkedName name={nameOf(l.source)} />, wide: true },
+        { key: 'to', label: 'To', value: (l) => nameOf(l.target), render: (l) => <LinkedName name={nameOf(l.target)} />, wide: true },
+        {
+          key: 'value',
+          label: metricName(metric),
+          value: (l) => l.value,
+          align: 'right',
+          render: (l) => `${full(l.value)}${unit}`,
+          format: (n) => `${full(n)}${unit}`,
+        },
+      ]}
+    />
   )
 }

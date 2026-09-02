@@ -3,6 +3,8 @@ import { DEFAULT_SCOPE, useReport, useScope, type Scope } from '../lib/scope'
 import type { IssueRow } from '../lib/api'
 import { ScopeBar } from '../components/ScopeBar'
 import { Card, Banner, Empty } from '../components/ui'
+import { DataGrid } from '../components/DataGrid'
+import { IssueLink } from '../components/IssueLink'
 import { compact, full, longDate, pct } from '../lib/format'
 import { NoData } from './Overview'
 
@@ -15,7 +17,7 @@ const CATEGORY_LABEL: Record<string, string> = {
 }
 
 export function Explorer() {
-  const { scope, setScope, replaceScope, catalog, sync, siteUrl } = useScope()
+  const { scope, setScope, replaceScope, catalog, sync } = useScope()
   const [filter, setFilter] = useState('')
   const [category, setCategory] = useState('all')
   const scopeReady = useRef(false)
@@ -104,63 +106,68 @@ export function Explorer() {
         }
       >
         {rows.length ? (
-          <div className="table-scroll" style={{ maxHeight: 620 }}>
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>Key</th>
-                  <th>Summary</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Assignee</th>
-                  <th>Parent</th>
-                  <th style={{ textAlign: 'right' }}>Points</th>
-                  <th style={{ textAlign: 'right' }}>Hours</th>
-                  <th>Updated</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((i) => (
-                  <tr key={i.key}>
-                    <td>
-                      {siteUrl ? (
-                        <a href={`${siteUrl}/browse/${i.key}`} target="_blank" rel="noreferrer">
-                          {i.key}
-                        </a>
-                      ) : (
-                        i.key
-                      )}
-                    </td>
-                    <td className="wide" title={i.summary}>
-                      {i.summary}
-                    </td>
-                    <td>{i.type}</td>
-                    <td>
-                      <span className="pill">{i.status}</span>
-                    </td>
-                    <td>{i.assignee ?? '—'}</td>
-                    <td>{i.parent ?? '—'}</td>
-                    <td className="num">{i.points != null ? full(i.points) : '—'}</td>
-                    <td className="num">{i.hours ? full(i.hours) : '—'}</td>
-                    <td>{i.updated ? longDate(i.updated) : '—'}</td>
-                    <td>
-                      {i.level >= 1 && (
-                        <button
-                          type="button"
-                          className="ghost"
-                          style={{ fontSize: 12, padding: '2px 8px' }}
-                          onClick={() => setScope({ roots: [i.key] })}
-                        >
-                          Report on this
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataGrid
+            rows={rows}
+            rowKey={(i) => i.key}
+            storageKey="explorer"
+            maxHeight={620}
+            columns={[
+              { key: 'key', label: 'Key', value: (i) => i.key, render: (i) => <IssueLink issueKey={i.key} />, groupable: false },
+              { key: 'summary', label: 'Summary', value: (i) => i.summary, wide: true, groupable: false, title: (i) => i.summary },
+              { key: 'type', label: 'Type', value: (i) => i.type },
+              {
+                key: 'status',
+                label: 'Status',
+                value: (i) => i.status,
+                render: (i) => <span className="pill">{i.status}</span>,
+              },
+              { key: 'category', label: 'Progress', value: (i) => CATEGORY_LABEL[i.category] ?? i.category },
+              { key: 'assignee', label: 'Assignee', value: (i) => i.assignee },
+              { key: 'project', label: 'Project', value: (i) => i.project },
+              { key: 'parent', label: 'Parent', value: (i) => i.parent },
+              {
+                key: 'points',
+                label: 'Points',
+                value: (i) => i.points,
+                align: 'right',
+                render: (i) => (i.points != null ? full(i.points) : '—'),
+              },
+              {
+                key: 'hours',
+                label: 'Hours',
+                value: (i) => i.hours || null,
+                align: 'right',
+                render: (i) => (i.hours ? full(i.hours) : '—'),
+              },
+              {
+                key: 'updated',
+                label: 'Updated',
+                value: (i) => i.updated,
+                render: (i) => (i.updated ? longDate(i.updated) : '—'),
+                groupable: false,
+              },
+              {
+                key: 'actions',
+                label: '',
+                value: () => null,
+                sortable: false,
+                groupable: false,
+                render: (i) =>
+                  i.level >= 1 ? (
+                    <button
+                      type="button"
+                      className="ghost"
+                      style={{ fontSize: 12, padding: '2px 8px' }}
+                      onClick={() => setScope({ roots: [i.key] })}
+                    >
+                      Report on this
+                    </button>
+                  ) : (
+                    ''
+                  ),
+              },
+            ]}
+          />
         ) : (
           <Empty title="Nothing matches">Clear the filter, or widen the scope in the filter row.</Empty>
         )}
@@ -169,48 +176,32 @@ export function Explorer() {
       {catalog?.levels && (
         <div className="grid cols-2" style={{ marginTop: 14 }}>
           <Card title="Issue types in the cache" sub="Grouped by Jira hierarchy level">
-            <div className="table-scroll" style={{ maxHeight: 260 }}>
-              <table className="data">
-                <thead>
-                  <tr>
-                    <th>Level</th>
-                    <th>Type</th>
-                    <th style={{ textAlign: 'right' }}>Issues</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {catalog.levels.map((l) => (
-                    <tr key={`${l.level}-${l.name}`}>
-                      <td>{levelName(l.level)}</td>
-                      <td>{l.name}</td>
-                      <td className="num">{full(l.n)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataGrid
+              rows={catalog.levels}
+              rowKey={(l) => `${l.level}-${l.name}`}
+              storageKey="catalog-levels"
+              maxHeight={260}
+              columns={[
+                { key: 'level', label: 'Level', value: (l) => l.level, render: (l) => levelName(l.level) },
+                { key: 'type', label: 'Type', value: (l) => l.name, groupable: false },
+                { key: 'n', label: 'Issues', value: (l) => l.n, align: 'right', render: (l) => full(l.n) },
+              ]}
+            />
           </Card>
 
           <Card title="Statuses in the cache" sub="What the cumulative flow bands are drawn from">
             <div className="table-scroll" style={{ maxHeight: 260 }}>
-              <table className="data">
-                <thead>
-                  <tr>
-                    <th>Status</th>
-                    <th>Progress</th>
-                    <th style={{ textAlign: 'right' }}>Issues</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(catalog.statuses ?? []).map((s) => (
-                    <tr key={s.name}>
-                      <td>{s.name}</td>
-                      <td>{CATEGORY_LABEL[s.category] ?? s.category}</td>
-                      <td className="num">{full(s.n)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <DataGrid
+                rows={catalog.statuses ?? []}
+                rowKey={(s) => s.name}
+                storageKey="catalog-statuses"
+                maxHeight={260}
+                columns={[
+                  { key: 'status', label: 'Status', value: (s) => s.name, groupable: false },
+                  { key: 'progress', label: 'Progress', value: (s) => CATEGORY_LABEL[s.category] ?? s.category },
+                  { key: 'n', label: 'Issues', value: (s) => s.n, align: 'right', render: (s) => full(s.n) },
+                ]}
+              />
             </div>
           </Card>
         </div>

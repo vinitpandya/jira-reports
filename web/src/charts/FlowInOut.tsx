@@ -2,6 +2,7 @@ import { useState } from 'react'
 import * as d3 from 'd3'
 import { compact, full, shortDate } from '../lib/format'
 import { Legend, Tooltip, useMeasure } from '../components/ui'
+import { DataGrid } from '../components/DataGrid'
 import type { BurnupData } from '../lib/api'
 
 const M = { top: 16, right: 12, bottom: 26, left: 44 }
@@ -246,32 +247,32 @@ function roundedBottom(x: number, y: number, w: number, h: number, r: number) {
 }
 
 export function FlowInOutTable({ data }: { data: BurnupData }) {
-  const rows = [...data.weekly].reverse()
+  const signed = (n: number) => `${n >= 0 ? '+' : ''}${full(n)}`
   return (
-    <div className="table-scroll">
-      <table className="data">
-        <thead>
-          <tr>
-            <th>Week</th>
-            <th style={{ textAlign: 'right' }}>Added</th>
-            <th style={{ textAlign: 'right' }}>Completed</th>
-            <th style={{ textAlign: 'right' }}>Net</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((d) => (
-            <tr key={d.week}>
-              <td>{d.week}</td>
-              <td className="num">{full(d.added)}</td>
-              <td className="num">{full(d.completed)}</td>
-              <td className="num">
-                {d.added - d.completed >= 0 ? '+' : ''}
-                {full(d.added - d.completed)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataGrid
+      rows={data.weekly}
+      rowKey={(d) => d.week}
+      storageKey="flow-io"
+      defaultSort={{ key: 'week', dir: 'desc' }}
+      columns={[
+        { key: 'week', label: 'Week', value: (d) => d.week, groupable: false },
+        { key: 'added', label: 'Added', value: (d) => d.added, align: 'right', render: (d) => full(d.added) },
+        {
+          key: 'completed',
+          label: 'Completed',
+          value: (d) => d.completed,
+          align: 'right',
+          render: (d) => full(d.completed),
+        },
+        {
+          key: 'net',
+          label: 'Net',
+          value: (d) => d.added - d.completed,
+          align: 'right',
+          render: (d) => signed(d.added - d.completed),
+          format: signed,
+        },
+      ]}
+    />
   )
 }
