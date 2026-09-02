@@ -3,6 +3,7 @@ import * as d3 from 'd3'
 import { makeColorScale } from '../lib/palette'
 import { full, pct } from '../lib/format'
 import { Legend, Tooltip, useMeasure, useThemeVersion } from '../components/ui'
+import { IssueLink } from '../components/IssueLink'
 import type { GraphData, GraphNode } from '../lib/api'
 
 type SimNode = GraphNode & d3.SimulationNodeDatum & { r: number }
@@ -281,9 +282,9 @@ export function GraphTable({ data }: { data: GraphData }) {
         <tbody>
           {data.edges.map((e, i) => (
             <tr key={i}>
-              <td>{byId.get(e.source)?.key ?? e.source}</td>
+              <td><IssueLink issueKey={byId.get(e.source)?.key ?? e.source} /></td>
               <td>{e.kind === 'parent' ? 'contains' : e.label || 'links to'}</td>
-              <td>{byId.get(e.target)?.key ?? e.target}</td>
+              <td><IssueLink issueKey={byId.get(e.target)?.key ?? e.target} /></td>
             </tr>
           ))}
         </tbody>

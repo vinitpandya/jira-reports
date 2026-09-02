@@ -3,6 +3,7 @@ import * as d3 from 'd3'
 import { ordinalRamp } from '../lib/palette'
 import { full } from '../lib/format'
 import { Legend, Tooltip, useMeasure, useThemeVersion } from '../components/ui'
+import { LinkedName } from '../components/IssueLink'
 import type { CycleTimeData } from '../lib/api'
 
 const ROW_H = 30
@@ -164,7 +165,7 @@ export function CycleTimeTable({ data }: { data: CycleTimeData }) {
         <tbody>
           {data.rows.map((r) => (
             <tr key={r.name}>
-              <td className="wide">{r.name}</td>
+              <td className="wide"><LinkedName name={r.name} /></td>
               <td className="num">{r.n}</td>
               <td className="num">{r.p50.toFixed(1)}</td>
               <td className="num">{r.p90.toFixed(1)}</td>

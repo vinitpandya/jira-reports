@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import * as d3 from 'd3'
 import { longDate } from '../lib/format'
 import { Legend, Tooltip, useMeasure, useThemeVersion } from '../components/ui'
+import { IssueLink } from '../components/IssueLink'
 import type { TimelineGraphData, TimelineNode } from '../lib/api'
 
 type SimNode = TimelineNode & d3.SimulationNodeDatum & { r: number }
@@ -318,7 +319,7 @@ export function TimelineTable({ data }: { data: TimelineGraphData }) {
         <tbody>
           {rows.map((n) => (
             <tr key={n.id}>
-              <td>{n.key}</td>
+              <td><IssueLink issueKey={n.key} /></td>
               <td>{n.type}</td>
               <td>{longDate(new Date(n.created))}</td>
               <td className="wide">

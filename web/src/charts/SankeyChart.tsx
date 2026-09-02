@@ -3,6 +3,7 @@ import { sankey as d3sankey, sankeyLinkHorizontal, sankeyJustify } from 'd3-sank
 import { makeColorScale } from '../lib/palette'
 import { compact, full } from '../lib/format'
 import { Legend, Tooltip, useMeasure, useThemeVersion } from '../components/ui'
+import { LinkedName } from '../components/IssueLink'
 import type { SankeyData } from '../lib/api'
 
 const M = { top: 12, right: 12, bottom: 12, left: 12 }
@@ -259,8 +260,8 @@ export function SankeyTable({ data, metric }: { data: SankeyData; metric: string
         <tbody>
           {rows.map((l, i) => (
             <tr key={i}>
-              <td className="wide">{byId.get(l.source)?.name ?? l.source}</td>
-              <td className="wide">{byId.get(l.target)?.name ?? l.target}</td>
+              <td className="wide"><LinkedName name={byId.get(l.source)?.name ?? l.source} /></td>
+              <td className="wide"><LinkedName name={byId.get(l.target)?.name ?? l.target} /></td>
               <td className="num">
                 {full(l.value)}
                 {unit}

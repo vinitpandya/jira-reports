@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { rangeStart, useReport, useScope, type RangePreset } from '../lib/scope'
+import { IssueLink, LinkedName } from '../components/IssueLink'
 import { makeColorScale } from '../lib/palette'
 import type {
   BreakdownData,
@@ -777,7 +778,8 @@ function TopItemsBody({ widget }: { widget: WidgetConfig }) {
           {data!.tree.map((n) => (
             <tr key={n.id}>
               <td className="wide" title={`${n.key} ${n.summary}`}>
-                {n.key} {n.summary.length > 34 ? `${n.summary.slice(0, 33)}…` : n.summary}
+                <IssueLink issueKey={n.key} />{' '}
+                {n.summary.length > 34 ? `${n.summary.slice(0, 33)}…` : n.summary}
               </td>
               <td className="num">{full(n.rollup.todo)}</td>
               <td className="num">{full(n.rollup.inProgress)}</td>
@@ -937,7 +939,7 @@ function ChartGroupedBody({ widget, kind }: { widget: WidgetConfig; kind: string
         <tbody>
           {data.rows.map((r) => (
             <tr key={r.id}>
-              <td className="wide" title={r.name}>{r.name.length > 40 ? `${r.name.slice(0, 39)}…` : r.name}</td>
+              <td className="wide" title={r.name}><LinkedName name={r.name} max={40} /></td>
               <td className="num">{full(r.todo)}</td>
               <td className="num">{full(r.inProgress)}</td>
               <td className="num">{full(r.done)}</td>
@@ -1284,7 +1286,7 @@ function IssuesBody({ widget }: { widget: WidgetConfig }) {
           const statusColor = STATUS_PILL_COLOR[i.category] ?? 'var(--text-muted)'
           return (
             <tr key={i.key}>
-              <td>{i.key}</td>
+              <td><IssueLink issueKey={i.key} /></td>
               <td>
                 <span className="pill">
                   <span className="dot" style={{ background: typeColor(i.type) }} />
