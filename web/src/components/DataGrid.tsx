@@ -171,7 +171,8 @@ export function DataGrid<T>({
           </label>
         </div>
       )}
-      <div className="table-scroll" style={maxHeight ? { maxHeight } : undefined}>
+      {/* Only scroll internally when asked; inside widgets the body scrolls. */}
+      <div className={maxHeight ? 'table-scroll' : undefined} style={maxHeight ? { maxHeight } : undefined}>
         <table className="data">
           <thead>
             <tr>

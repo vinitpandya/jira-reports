@@ -849,10 +849,13 @@ export function burnup({ issues, cloudId = activeCloudId(), metric = 'count', fr
     db.prepare('SELECT id, name, category_key FROM statuses WHERE cloud_id = ?').all(cloudId)
       .map((s) => [String(s.id), s])
   )
-  const catOf = (statusId, fallback = 'indeterminate') => {
+  // Resolve by id, but fall back to the recorded status name so a hop whose
+  // id is unknown (other workflow, renamed status) still lands in the right
+  // category — a "Closed" that never resolved would otherwise read as active.
+  const catOf = (statusId, statusName, fallback = 'indeterminate') => {
     const m = statusMeta.get(String(statusId))
-    if (!m) return fallback
-    return categoryForStatusName(m.name, m.category_key || fallback)
+    if (!m && !statusName) return fallback
+    return categoryForStatusName(statusName || m?.name, m?.category_key || fallback)
   }
 
   const toMs = (s) => (s ? new Date(s).getTime() : null)
@@ -870,7 +873,7 @@ export function burnup({ issues, cloudId = activeCloudId(), metric = 'count', fr
     scopeEvents.push({ t: created, w })
 
     const hist = (history.get(issue.id) || []).filter((h) => toMs(h.at) !== null)
-    let cat = hist.length ? catOf(hist[0].from_id, 'new') : categoryOf(issue)
+    let cat = hist.length ? catOf(hist[0].from_id, hist[0].from_status, 'new') : categoryOf(issue)
     let firstDone = null
 
     if (cat === 'done') {
@@ -879,7 +882,7 @@ export function burnup({ issues, cloudId = activeCloudId(), metric = 'count', fr
     }
     for (const h of hist) {
       const t = Math.max(toMs(h.at), created)
-      const next = catOf(h.to_id)
+      const next = catOf(h.to_id, h.to_status)
       if (next === 'done' && cat !== 'done') {
         doneEvents.push({ t, w })
         if (firstDone === null) firstDone = t
@@ -971,10 +974,13 @@ export function graphTimeline({ issues, cloudId = activeCloudId(), maxStories = 
     db.prepare('SELECT id, name, category_key FROM statuses WHERE cloud_id = ?').all(cloudId)
       .map((s) => [String(s.id), s])
   )
-  const catOf = (statusId, fallback = 'indeterminate') => {
+  // Resolve by id, but fall back to the recorded status name so a hop whose
+  // id is unknown (other workflow, renamed status) still lands in the right
+  // category — a "Closed" that never resolved would otherwise read as active.
+  const catOf = (statusId, statusName, fallback = 'indeterminate') => {
     const m = statusMeta.get(String(statusId))
-    if (!m) return fallback
-    return categoryForStatusName(m.name, m.category_key || fallback)
+    if (!m && !statusName) return fallback
+    return categoryForStatusName(statusName || m?.name, m?.category_key || fallback)
   }
   const toMs = (s) => (s ? new Date(s).getTime() : null)
 
@@ -983,11 +989,11 @@ export function graphTimeline({ issues, cloudId = activeCloudId(), maxStories = 
       const created = toMs(i.created)
       if (!created) return null
       const hist = (history.get(i.id) || []).filter((h) => toMs(h.at) !== null)
-      const initial = hist.length ? catOf(hist[0].from_id, 'new') : categoryOf(i)
+      const initial = hist.length ? catOf(hist[0].from_id, hist[0].from_status, 'new') : categoryOf(i)
       const transitions = []
       let cat = initial
       for (const h of hist) {
-        const next = catOf(h.to_id)
+        const next = catOf(h.to_id, h.to_status)
         if (next === cat) continue
         transitions.push({ at: Math.max(toMs(h.at), created), cat: next })
         cat = next

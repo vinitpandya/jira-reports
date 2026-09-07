@@ -1268,9 +1268,10 @@ const STATUS_PILL_COLOR: Record<string, string> = {
 }
 
 function IssuesBody({ widget }: { widget: WidgetConfig }) {
+  // Fetch enough rows to fill the space: ~28px per row, more in full screen.
   const { data } = useReport<{ total: number; issues: IssueRow[] }>('/reports/issues', {
     ...widgetExtra(widget.options),
-    limit: 60,
+    limit: Math.min(500, Math.max(60, Math.ceil(bodyHeight(widget.h) / 28))),
   })
   if (!data?.issues?.length) return <Empty title="No issues in scope" />
   const typeColor = makeColorScale([...new Set(data.issues.map((i) => i.type))].sort())
