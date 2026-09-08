@@ -7,6 +7,7 @@ import { Modal } from './components/ui'
 import { DashboardPage, DashboardsIndex } from './pages/Dashboards'
 import { Explorer } from './pages/Explorer'
 import { StatusReportPage } from './pages/StatusReport'
+import { DiagramPage } from './pages/Diagram'
 import { Settings } from './pages/Settings'
 
 /** Fixed order and icons for the seeded built-in pages. */
@@ -41,6 +42,13 @@ function Shell() {
             Weekly report
           </NavLink>
           <div className="nav-group-label" style={{ paddingTop: 14 }}>
+            Tools
+          </div>
+          <NavLink to="/diagrams" className={({ isActive }) => (isActive ? 'active' : '')}>
+            <IconDiagram />
+            Diagrams
+          </NavLink>
+          <div className="nav-group-label" style={{ paddingTop: 14 }}>
             Data
           </div>
           <NavLink to="/settings" className={({ isActive }) => (isActive ? 'active' : '')}>
@@ -69,6 +77,7 @@ function Shell() {
           <Route path="/d/:id" element={<DashboardPage />} />
           <Route path="/explorer" element={<Explorer />} />
           <Route path="/status" element={<StatusReportPage />} />
+          <Route path="/diagrams" element={<DiagramPage />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<SlugRedirect slug="overview" />} />
         </Routes>
@@ -422,6 +431,16 @@ function IconReport() {
     <svg {...S}>
       <rect x="2.6" y="1.8" width="10.8" height="12.4" rx="1.6" stroke="currentColor" strokeWidth="1.4" />
       <path d="M5.2 5h5.6M5.2 7.6h5.6M5.2 10.2h3.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  )
+}
+function IconDiagram() {
+  return (
+    <svg {...S}>
+      <rect x="1.8" y="2" width="5" height="3.6" rx="1" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="9.2" y="6.2" width="5" height="3.6" rx="1" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="1.8" y="10.4" width="5" height="3.6" rx="1" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M6.8 3.8h1.6v4.2h.8M6.8 12.2h1.6V8h.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
     </svg>
   )
 }
