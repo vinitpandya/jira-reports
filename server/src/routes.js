@@ -17,6 +17,7 @@ import {
   resolveScope,
   summarise,
   categoryOf,
+  workItems,
   categoryOverrides,
   categoryForStatusName,
   invalidateCategoryOverrides,
@@ -343,31 +344,45 @@ router.get('/reports/people', wrap(async (req, res) => {
   })
 }))
 
+const issueRow = (i) => ({
+  key: i.key,
+  summary: i.summary,
+  type: i.type_name,
+  level: i.hierarchy_level,
+  status: i.status_name,
+  category: categoryOf(i),
+  assignee: i.assignee_name,
+  project: i.project_key,
+  points: i.story_points,
+  hours: (i.time_spent || 0) / 3600,
+  created: i.created,
+  updated: i.updated,
+  resolved: i.resolved,
+  parent: i.parent_key,
+})
+
+const byUpdatedDesc = (a, b) => (b.updated || '').localeCompare(a.updated || '')
+
 router.get('/reports/issues', wrap(async (req, res) => {
   const { issues } = scopeFrom(req.query)
   const limit = Math.min(Number(req.query.limit) || 500, 5000)
   res.json({
     total: issues.length,
-    issues: issues
-      .slice()
-      .sort((a, b) => (b.updated || '').localeCompare(a.updated || ''))
-      .slice(0, limit)
-      .map((i) => ({
-        key: i.key,
-        summary: i.summary,
-        type: i.type_name,
-        level: i.hierarchy_level,
-        status: i.status_name,
-        category: categoryOf(i),
-        assignee: i.assignee_name,
-        project: i.project_key,
-        points: i.story_points,
-        hours: (i.time_spent || 0) / 3600,
-        created: i.created,
-        updated: i.updated,
-        resolved: i.resolved,
-        parent: i.parent_key,
-      })),
+    issues: issues.slice().sort(byUpdatedDesc).slice(0, limit).map(issueRow),
+  })
+}))
+
+/**
+ * What the burn-down still counts as open: the scope's work items (leaves)
+ * whose mapped category is not done — the chart's last value, itemised.
+ */
+router.get('/reports/remaining', wrap(async (req, res) => {
+  const { issues } = scopeFrom(req.query)
+  const open = workItems(issues).filter((i) => categoryOf(i) !== 'done')
+  res.json({
+    total: open.length,
+    points: open.reduce((s, i) => s + (i.story_points || 0), 0),
+    issues: open.sort(byUpdatedDesc).map(issueRow),
   })
 }))
 

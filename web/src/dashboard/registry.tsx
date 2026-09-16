@@ -1197,6 +1197,7 @@ function BurnupBody({ widget }: { widget: WidgetConfig }) {
 
 function BurndownBody({ widget }: { widget: WidgetConfig }) {
   const { scope } = useScope()
+  const [tab, setTab] = useState<'chart' | 'remaining'>('chart')
   const { data } = useReport<BurnupData>('/reports/burnup', widgetExtra(widget.options))
   const dueMode = widget.options.dueMode || 'closest'
   // Epic due dates come from the tracked fields of the selected roots.
@@ -1204,7 +1205,82 @@ function BurndownBody({ widget }: { widget: WidgetConfig }) {
     dueMode === 'fixed' ? null : '/reports/epic-dates',
     widgetExtra(widget.options)
   )
+  // What the chart still counts as open — the same work-item + done-like
+  // rules the burn-down uses, so this list is its last value, itemised.
+  const { data: remaining } = useReport<{ total: number; points: number; issues: IssueRow[] }>(
+    '/reports/remaining',
+    widgetExtra(widget.options)
+  )
   if (!data || data.empty || data.series.length < 2) return <Empty title="Not enough history" />
+
+  const tabs = (
+    <div className="row" style={{ marginBottom: 8 }}>
+      <div className="segmented" role="group" aria-label="Burn-down view">
+        <button type="button" aria-pressed={tab === 'chart'} onClick={() => setTab('chart')} style={{ padding: '3px 9px', fontSize: 12 }}>
+          Chart
+        </button>
+        <button type="button" aria-pressed={tab === 'remaining'} onClick={() => setTab('remaining')} style={{ padding: '3px 9px', fontSize: 12 }}>
+          Remaining{remaining ? ` (${remaining.total})` : ''}
+        </button>
+      </div>
+    </div>
+  )
+
+  if (tab === 'remaining') {
+    const typeColor = makeColorScale([...new Set((remaining?.issues ?? []).map((i) => i.type))].sort())
+    const statusColor = (i: IssueRow) => STATUS_PILL_COLOR[i.category] ?? 'var(--text-muted)'
+    return (
+      <div>
+        {tabs}
+        {!remaining ? null : remaining.issues.length === 0 ? (
+          <Empty title="Nothing left open — burned down" />
+        ) : (
+          <>
+            <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+              {remaining.total} open work item{remaining.total === 1 ? '' : 's'}
+              {remaining.points ? ` · ${full(remaining.points)} points` : ''} — still counted by the burn-down.
+              Anything here that is closed in Jira points to a status mapping or sync gap.
+            </p>
+            <DataGrid
+              rows={remaining.issues}
+              rowKey={(i) => i.key}
+              storageKey="burndown-remaining"
+              defaultSort={{ key: 'updated', dir: 'desc' }}
+              columns={[
+                { key: 'key', label: 'Key', value: (i) => i.key, render: (i) => <IssueLink issueKey={i.key} />, groupable: false },
+                {
+                  key: 'type',
+                  label: 'Type',
+                  value: (i) => i.type,
+                  render: (i) => (
+                    <span className="pill">
+                      <span className="dot" style={{ background: typeColor(i.type) }} />
+                      {i.type}
+                    </span>
+                  ),
+                },
+                { key: 'summary', label: 'Summary', value: (i) => i.summary, wide: true, groupable: false, title: (i) => i.summary },
+                {
+                  key: 'status',
+                  label: 'Status',
+                  value: (i) => i.status,
+                  render: (i) => (
+                    <span className="pill" style={{ color: statusColor(i), borderColor: statusColor(i), fontWeight: 600 }}>
+                      {i.status}
+                    </span>
+                  ),
+                },
+                { key: 'assignee', label: 'Assignee', value: (i) => i.assignee },
+                { key: 'parent', label: 'Parent', value: (i) => i.parent },
+                { key: 'points', label: 'Points', value: (i) => i.points, align: 'right', render: (i) => (i.points != null ? full(i.points) : '—') },
+                { key: 'updated', label: 'Updated', value: (i) => i.updated, render: (i) => (i.updated ? longDate(i.updated) : '—'), groupable: false },
+              ]}
+            />
+          </>
+        )}
+      </div>
+    )
+  }
 
   let dueDate: string | null = null
   if (dueMode === 'fixed') {
@@ -1219,12 +1295,15 @@ function BurndownBody({ widget }: { widget: WidgetConfig }) {
   }
 
   return (
-    <Burndown
-      data={data}
-      metric={effectiveMetric(widget.options, scope.metric)}
-      dueDate={dueDate}
-      height={Math.max(200, bodyHeight(widget.h) - 56)}
-    />
+    <div>
+      {tabs}
+      <Burndown
+        data={data}
+        metric={effectiveMetric(widget.options, scope.metric)}
+        dueDate={dueDate}
+        height={Math.max(200, bodyHeight(widget.h) - 90)}
+      />
+    </div>
   )
 }
 
