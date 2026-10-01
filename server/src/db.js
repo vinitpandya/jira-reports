@@ -149,6 +149,23 @@ CREATE TABLE IF NOT EXISTS assignee_history (
 );
 CREATE INDEX IF NOT EXISTS idx_ahist_issue ON assignee_history (cloud_id, issue_id, at);
 
+-- Parent moves (parent field, Epic Link, Parent Link) so a report can tell
+-- which epic or initiative an issue belonged to on any given day.
+CREATE TABLE IF NOT EXISTS parent_history (
+  cloud_id    TEXT NOT NULL,
+  issue_id    TEXT NOT NULL,
+  at          TEXT NOT NULL,
+  field       TEXT NOT NULL,   -- parent | epic-link | parent-link
+  from_id     TEXT,
+  from_key    TEXT,
+  to_id       TEXT,
+  to_key      TEXT,
+  PRIMARY KEY (cloud_id, issue_id, at, field)
+);
+CREATE INDEX IF NOT EXISTS idx_phist_issue ON parent_history (cloud_id, issue_id, at);
+CREATE INDEX IF NOT EXISTS idx_phist_from ON parent_history (cloud_id, from_id);
+CREATE INDEX IF NOT EXISTS idx_phist_to ON parent_history (cloud_id, to_id);
+
 -- Which issues we have already pulled a changelog for, so a refresh only
 -- re-reads issues whose "updated" moved past the recorded watermark.
 CREATE TABLE IF NOT EXISTS changelog_cursor (
