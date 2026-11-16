@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { api, type AuthStatus, type Project, type Site, type StatusMapping } from '../lib/api'
+import { api, type AuthStatus, type HistoryHealth, type Project, type Site, type StatusMapping } from '../lib/api'
 import { useScope } from '../lib/scope'
 import { Card, Banner, Meter } from '../components/ui'
 import { duration, full, relative } from '../lib/format'
@@ -303,7 +303,7 @@ export function Settings() {
         {/* ---------------------------------------------------- step 4 */}
         <Card
           title="4 · Sync"
-          sub="Incremental only re-reads issues changed since the last run. Full rebuild re-reads everything."
+          sub="Refresh re-reads issues changed since the last run. Rebuild history keeps issues but re-reads every changelog — use it when burn-downs look wrong. Full rebuild re-reads everything."
         >
           <div className="row">
             <button
@@ -320,6 +320,14 @@ export function Settings() {
               onClick={() => void startSync('full')}
             >
               Full rebuild
+            </button>
+            <button
+              type="button"
+              disabled={!auth?.connected || running}
+              onClick={() => void startSync('history')}
+              title="Re-read the change history of every cached issue (status, assignee, parent / epic moves). Slower, but repairs history-based charts."
+            >
+              Rebuild history
             </button>
             {running && (
               <button type="button" className="ghost" onClick={() => void cancelSync()}>
@@ -369,6 +377,18 @@ export function Settings() {
                         <th style={{ position: 'static' }}>Histories read</th>
                         <td>{full(last.stats.changelogs)}</td>
                       </tr>
+                      {!!last.stats.changelogsRefetched && (
+                        <tr>
+                          <th style={{ position: 'static' }}>Re-read one by one</th>
+                          <td>{full(last.stats.changelogsRefetched)} (missing from the bulk answer)</td>
+                        </tr>
+                      )}
+                      {!!last.stats.changelogsKept && (
+                        <tr>
+                          <th style={{ position: 'static' }}>History kept</th>
+                          <td>{full(last.stats.changelogsKept)} (Jira returned nothing; stored history preserved)</td>
+                        </tr>
+                      )}
                       <tr>
                         <th style={{ position: 'static' }}>Issues cached</th>
                         <td>{full(last.stats.issuesInDb)}</td>
@@ -394,9 +414,77 @@ export function Settings() {
           )}
         </Card>
 
+        {catalog?.ready && <HistoryHealthCard running={running} connected={!!auth?.connected} finishedAt={last?.finishedAt ?? null} />}
+
         {catalog?.ready && <WorkflowStatesCard />}
       </div>
     </div>
+  )
+}
+
+/* -------------------------------------------------------- history health */
+
+/**
+ * How much of the cached past is real changelog versus reconstruction. The
+ * burn-down, added vs completed and CFD replay this history, so gaps here are
+ * gaps in those charts.
+ */
+function HistoryHealthCard({
+  running,
+  connected,
+  finishedAt,
+}: {
+  running: boolean
+  connected: boolean
+  finishedAt: number | null
+}) {
+  const { startSync } = useScope()
+  const [h, setH] = useState<HistoryHealth | null>(null)
+
+  useEffect(() => {
+    if (running) return
+    api.get<HistoryHealth>('/sync/history-health').then(setH).catch(() => setH(null))
+  }, [running, finishedAt])
+
+  if (!h?.ready) return null
+  const outdated = h.historyVersion < h.historyVersionCurrent
+  const needsRebuild = outdated || h.movedWithoutHistory > 0
+  const row = (label: string, value: string) => (
+    <tr>
+      <th style={{ position: 'static' }}>{label}</th>
+      <td>{value}</td>
+    </tr>
+  )
+
+  return (
+    <Card
+      title="Change history"
+      sub="Burn-down, added vs completed, CFD and the network replay are rebuilt from each issue's changelog."
+    >
+      {needsRebuild && (
+        <Banner
+          kind="warn"
+          title={outdated ? 'History needs a refresh' : 'Some history is estimated'}
+          actions={
+            <button type="button" disabled={running || !connected} onClick={() => void startSync('history')}>
+              Rebuild history now
+            </button>
+          }
+        >
+          {outdated
+            ? 'Cached history predates parent / epic move tracking. The next sync re-reads every changelog automatically, or run it now.'
+            : `${full(h.movedWithoutHistory)} issue(s) have left "to do" but have no status history, so their dates are estimated. Rebuild history to fetch them.`}
+        </Banner>
+      )}
+      <table className="data" style={{ maxWidth: 480, marginTop: needsRebuild ? 12 : 0 }}>
+        <tbody>
+          {row('Issues with status history', `${full(h.withStatusHistory)} of ${full(h.issues)}`)}
+          {row('Started work, no history', full(h.movedWithoutHistory))}
+          {row('Parent / epic moves', `${full(h.parentMoves)} across ${full(h.issuesWithParentMoves)} issue(s)`)}
+          {row('Waiting for next sync', full(h.staleHistory))}
+        </tbody>
+      </table>
+    </Card>
   )
 }
 

@@ -73,6 +73,14 @@ it is the slow one on a large project.
 Later syncs are incremental: only issues whose `updated` timestamp moved are
 re-read, and only those get their change history re-fetched.
 
+Change history covers every changelog field: status, assignee, and parent moves
+(the parent field, Epic Link, Parent Link). Issues the bulk changelog endpoint
+leaves out of its answer are re-read one by one, and a cached history is never
+erased because Jira returned nothing for it. **Rebuild history** re-reads every
+cached issue's changelog without re-reading the issues, and the **Change
+history** card on the Settings page shows how much of the cache is backed by
+real changelogs.
+
 ## Reports
 
 | Page | What it answers |
@@ -182,6 +190,15 @@ character, including the scheme and port.
 **Cumulative flow says "not enough history"** — the change-history phase of the
 sync had not finished, or the window predates the issues. Widen the window, or
 re-run the sync and watch step 4 on the Settings page.
+
+**Burn-down only climbs / added vs completed are one line** — work that is done
+today but has no stored status history used to count as done from the day it
+was created. History charts now estimate those dates from the resolution date
+and say so under the chart; run **Rebuild history** on the Settings page to
+replace the estimates with the real changelog. History charts (burn-up, burn-down,
+added vs completed, CFD, cycle time) also ignore the *Exclude done* and status
+filters, which describe where issues are today, and count work moved between
+epics only while it sat in the selected scope.
 
 **No initiatives in the picker** — your site may not use a hierarchy level above
 Epic, or those issues live in a project you have not cached. Check *Explorer →

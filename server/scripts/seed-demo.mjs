@@ -20,7 +20,7 @@ const iso = (ms) => new Date(ms).toISOString().replace('Z', '+0000')
 
 function removeDemo() {
   const tables = [
-    'issues', 'issue_links', 'status_history', 'assignee_history',
+    'issues', 'issue_links', 'status_history', 'assignee_history', 'parent_history',
     'changelog_cursor', 'projects', 'issue_types', 'statuses', 'fields', 'sites',
   ]
   const tx = db.transaction(() => {

@@ -1181,17 +1181,48 @@ function GraphBody({ widget }: { widget: WidgetConfig }) {
   return <NetworkGraph data={data} colorBy={colorBy} height={Math.max(220, bodyHeight(widget.h) - 64)} />
 }
 
+/**
+ * What a history replay rests on: filters it set aside, items whose dates are
+ * estimated for want of a changelog, and work counted only while it was in
+ * scope. Silent when the replay is fully backed by recorded history.
+ */
+function HistoryNote({ data }: { data: BurnupData }) {
+  const h = data.history
+  const notes: string[] = []
+  if (data.ignoredFilters?.length) {
+    notes.push(`${data.ignoredFilters.join(' and ')} ignored — history charts replay all work, done included.`)
+  }
+  if (h?.inferred) {
+    notes.push(
+      `${full(h.inferred)} of ${full(h.leaves)} items have no status history; their dates are estimated. Settings → Rebuild history fetches them.`
+    )
+  }
+  const moved = Math.max(h?.movedOut ?? 0, h?.formerMembers ?? 0)
+  if (h?.membershipTracked && moved) {
+    notes.push(`${full(moved)} item${moved === 1 ? '' : 's'} moved out of scope — counted only while in it.`)
+  }
+  if (!notes.length) return null
+  return (
+    <p className="muted" style={{ fontSize: 11.5, margin: '6px 0 0', lineHeight: 1.4 }}>
+      {notes.join(' ')}
+    </p>
+  )
+}
+
 function BurnupBody({ widget }: { widget: WidgetConfig }) {
   const { scope } = useScope()
   const { data } = useReport<BurnupData>('/reports/burnup', widgetExtra(widget.options))
   if (!data || data.empty || data.series.length < 2) return <Empty title="Not enough history" />
   if (widget.options.view === 'table') return <ProgressTable data={data} />
   return (
-    <ProgressLine
-      data={data}
-      metric={effectiveMetric(widget.options, scope.metric)}
-      height={Math.max(180, bodyHeight(widget.h) - 24)}
-    />
+    <div>
+      <ProgressLine
+        data={data}
+        metric={effectiveMetric(widget.options, scope.metric)}
+        height={Math.max(180, bodyHeight(widget.h) - 44)}
+      />
+      <HistoryNote data={data} />
+    </div>
   )
 }
 
@@ -1301,8 +1332,9 @@ function BurndownBody({ widget }: { widget: WidgetConfig }) {
         data={data}
         metric={effectiveMetric(widget.options, scope.metric)}
         dueDate={dueDate}
-        height={Math.max(200, bodyHeight(widget.h) - 90)}
+        height={Math.max(180, bodyHeight(widget.h) - 140)}
       />
+      <HistoryNote data={data} />
     </div>
   )
 }
@@ -1313,16 +1345,19 @@ function FlowIoBody({ widget }: { widget: WidgetConfig }) {
   if (!data?.weekly?.length) return <Empty title="Nothing arrived or finished" />
   if (widget.options.view === 'table') return <FlowInOutTable data={data} />
   return (
-    <FlowInOut
-      data={data}
-      metric={effectiveMetric(widget.options, scope.metric)}
-      variant={
-        widget.options.style === 'lines' ? 'lines'
-        : widget.options.style === 'cumulative' ? 'cumulative'
-        : 'bars'
-      }
-      height={Math.max(160, bodyHeight(widget.h) - 60)}
-    />
+    <div>
+      <FlowInOut
+        data={data}
+        metric={effectiveMetric(widget.options, scope.metric)}
+        variant={
+          widget.options.style === 'lines' ? 'lines'
+          : widget.options.style === 'cumulative' ? 'cumulative'
+          : 'bars'
+        }
+        height={Math.max(160, bodyHeight(widget.h) - 80)}
+      />
+      <HistoryNote data={data} />
+    </div>
   )
 }
 

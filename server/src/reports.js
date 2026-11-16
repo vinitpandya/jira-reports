@@ -1,5 +1,9 @@
 import { db, getConfig } from './db.js'
 import { activeCloudId } from './oauth.js'
+import {
+  statusHistoryFor, statusCategoryResolver, categoryTimeline, categoryAt,
+  membershipTracker, expandWithFormerMembers,
+} from './history.js'
 
 const DAY = 86_400_000
 
@@ -98,6 +102,7 @@ export function resolveScope({
   if (!seedIds.length) return { cloudId, issues: [] }
 
   let ids = new Set(seedIds)
+  let anchorIds = null
 
   if (descendants && roots.length) {
     if (followLinks) {
@@ -112,6 +117,9 @@ export function resolveScope({
       for (const r of linked) ids.add(r.id)
     }
 
+    // The roots (and their linked tickets) anchor the scope; everything else
+    // belongs only while it sits beneath one of them.
+    anchorIds = [...ids]
     const frontier = [...ids]
     const rows = db
       .prepare(
@@ -153,7 +161,7 @@ export function resolveScope({
     filtered = filtered.filter((i) => !isDoneLike(i.status_name, i.status_category))
   }
 
-  return { cloudId, issues: filtered }
+  return { cloudId, issues: filtered, anchorIds }
 }
 
 /* ---------------------------------------------------------------- metrics */
@@ -213,27 +221,6 @@ export function summarise(allIssues, metric = 'count') {
 
 /* -------------------------------------------------- cumulative flow (CFD) */
 
-function statusHistoryFor(cloudId, issueIds) {
-  const map = new Map()
-  const chunk = 900
-  for (let i = 0; i < issueIds.length; i += chunk) {
-    const part = issueIds.slice(i, i + chunk)
-    const rows = db
-      .prepare(
-        `SELECT issue_id, at, from_id, from_status, to_id, to_status
-         FROM status_history
-         WHERE cloud_id = ? AND issue_id IN (${placeholders(part.length)})
-         ORDER BY at ASC`
-      )
-      .all(cloudId, ...part)
-    for (const r of rows) {
-      if (!map.has(r.issue_id)) map.set(r.issue_id, [])
-      map.get(r.issue_id).push(r)
-    }
-  }
-  return map
-}
-
 function dayKey(ts) {
   return new Date(ts).toISOString().slice(0, 10)
 }
@@ -268,17 +255,17 @@ export function cumulativeFlow({
 
   const categoryLabel = { new: 'To do', indeterminate: 'In progress', done: 'Done' }
 
-  const catForStatus = (statusId, statusName) => {
+  const catForStatus = (statusId, statusName, fallback = 'indeterminate') => {
     const m = statusMeta.get(String(statusId))
-    return categoryForStatusName(statusName || m?.name, m?.category_key || 'indeterminate')
+    return categoryForStatusName(statusName || m?.name, m?.category_key || fallback)
   }
 
-  const labelFor = (statusId, statusName) => {
+  const labelFor = (statusId, statusName, fallback = 'indeterminate') => {
     if (groupBy === 'category') {
-      const cat = catForStatus(statusId, statusName)
+      const cat = catForStatus(statusId, statusName, fallback)
       return categoryLabel[cat] || cat
     }
-    if (mergeDone && catForStatus(statusId, statusName) === 'done') return 'Done'
+    if (mergeDone && catForStatus(statusId, statusName, fallback) === 'done') return 'Done'
     return statusMeta.get(String(statusId))?.name || statusName || 'Unknown'
   }
 
@@ -303,13 +290,27 @@ export function cumulativeFlow({
     if (!w) continue
     const created = toMs(issue.created)
     if (!created) continue
-    const hist = (history.get(issue.id) || []).filter((h) => toMs(h.at) !== null)
+    let hist = history.get(issue.id) || []
+    if (!hist.length) {
+      // No changelog: rebuild one hop from the shared reconstruction so done
+      // work does not sit in Done from the day it was raised.
+      const tl = categoryTimeline(issue, hist, catForStatus)
+      if (tl.steps.length) {
+        hist = [{
+          t: tl.steps[0].t,
+          from_id: null,
+          from_status: 'To Do',
+          to_id: issue.status_id,
+          to_status: issue.status_name,
+        }]
+      }
+    }
 
     const firstLabel = hist.length
-      ? labelFor(hist[0].from_id, hist[0].from_status)
+      ? labelFor(hist[0].from_id, hist[0].from_status, 'new')
       : labelFor(issue.status_id, issue.status_name)
     const firstCat = hist.length
-      ? catForStatus(hist[0].from_id, hist[0].from_status)
+      ? catForStatus(hist[0].from_id, hist[0].from_status, 'new')
       : categoryOf(issue)
 
     events.push({ t: created, label: firstLabel, delta: w })
@@ -319,7 +320,7 @@ export function cumulativeFlow({
 
     let prev = firstLabel
     hist.forEach((h, idx) => {
-      const t = Math.max(toMs(h.at), created)
+      const t = Math.max(h.t, created)
       const next = labelFor(h.to_id, h.to_status)
       if (next === prev) return
       events.push({ t, label: prev, delta: -w })
@@ -835,69 +836,97 @@ export function timeseries({
 /* ---------------------------------------------------------------- burn-up */
 
 /**
- * The story of a scope over time: how much work existed each day, how much of
- * it was done, and — per week — how much arrived versus finished. Rebuilt from
- * issue change history, counting leaf issues only.
+ * Burn-up / burn-down / added-vs-completed, replayed from history.
+ *
+ * Every work item (leaf) contributes to scope only while it was in scope —
+ * from creation for a project scope, or while it sat beneath one of the
+ * anchors (epic, initiative) for a root scope, following parent / Epic Link /
+ * Parent Link moves. It contributes to done while in scope and in a done-like
+ * category on that day. `history` reports how much of this rests on recorded
+ * changelogs versus inference, so gaps are visible rather than silent.
  */
-export function burnup({ issues, cloudId = activeCloudId(), metric = 'count', from }) {
-  const parents = new Set(issues.map((i) => i.parent_id).filter(Boolean))
-  const leaves = issues.filter((i) => !parents.has(i.id))
-  if (!leaves.length) return { series: [], weekly: [], empty: true }
-
-  const history = statusHistoryFor(cloudId, leaves.map((i) => i.id))
-  const statusMeta = new Map(
-    db.prepare('SELECT id, name, category_key FROM statuses WHERE cloud_id = ?').all(cloudId)
-      .map((s) => [String(s.id), s])
-  )
-  // Resolve by id, but fall back to the recorded status name so a hop whose
-  // id is unknown (other workflow, renamed status) still lands in the right
-  // category — a "Closed" that never resolved would otherwise read as active.
-  const catOf = (statusId, statusName, fallback = 'indeterminate') => {
-    const m = statusMeta.get(String(statusId))
-    if (!m && !statusName) return fallback
-    return categoryForStatusName(statusName || m?.name, m?.category_key || fallback)
+export function burnup({
+  issues,
+  cloudId = activeCloudId(),
+  metric = 'count',
+  from,
+  anchorIds = null,
+  types = [],
+}) {
+  let pool = issues
+  let formerMembers = 0
+  if (anchorIds?.length) {
+    // Work that was moved out of the scope still counted while it was in.
+    let former = expandWithFormerMembers(cloudId, issues)
+    if (types.length) {
+      former = former.filter((i) => types.includes(i.type_name) || types.includes(String(i.hierarchy_level)))
+    }
+    formerMembers = former.length
+    pool = [...issues, ...former]
   }
 
+  const leaves = workItems(pool)
+  if (!leaves.length) return { series: [], weekly: [], empty: true }
+
+  const statusHist = statusHistoryFor(cloudId, leaves.map((i) => i.id))
+  const { catOf } = statusCategoryResolver(cloudId)
+  const tracker = anchorIds?.length ? membershipTracker(cloudId, anchorIds) : null
   const toMs = (s) => (s ? new Date(s).getTime() : null)
-  const scopeEvents = [] // { t, w }
-  const doneEvents = [] // { t, w } (negative when leaving done)
-  const perIssue = [] // { created, firstDone, w }
+
+  const scopeEvents = [] // { t, w } (+ entering scope, − leaving it)
+  const doneEvents = [] // { t, w } (+ becoming done while in scope, − undone / leaving)
+  const weeklyEvents = [] // { t, kind: 'added' | 'removed' | 'completed', w }
+  const diag = { leaves: 0, withHistory: 0, inferred: 0, movedOut: 0, everDone: 0 }
   let minT = Infinity
 
   for (const issue of leaves) {
     const w = metricValue(issue, metric)
     if (!w) continue
     const created = toMs(issue.created)
-    if (!created) continue
-    minT = Math.min(minT, created)
-    scopeEvents.push({ t: created, w })
+    if (!Number.isFinite(created)) continue
 
-    const hist = (history.get(issue.id) || []).filter((h) => toMs(h.at) !== null)
-    let cat = hist.length ? catOf(hist[0].from_id, hist[0].from_status, 'new') : categoryOf(issue)
-    let firstDone = null
+    const hist = statusHist.get(issue.id) || []
+    const timeline = categoryTimeline(issue, hist, catOf)
+    const intervals = tracker ? tracker.intervalsFor(issue.id) : [[created, Infinity]]
+    if (!intervals.length) continue // never actually under the selected roots
 
-    if (cat === 'done') {
-      doneEvents.push({ t: created, w })
-      firstDone = created
+    diag.leaves += 1
+    if (hist.length) diag.withHistory += 1
+    if (timeline.inferred) diag.inferred += 1
+    if (intervals[intervals.length - 1][1] !== Infinity) diag.movedOut += 1
+    minT = Math.min(minT, intervals[0][0])
+
+    // Walk every instant where membership or category could change and emit
+    // the deltas in scope and done between consecutive states.
+    const points = new Set([created])
+    for (const [s0, e0] of intervals) {
+      points.add(s0)
+      if (e0 !== Infinity) points.add(e0)
     }
-    for (const h of hist) {
-      const t = Math.max(toMs(h.at), created)
-      const next = catOf(h.to_id, h.to_status)
-      if (next === 'done' && cat !== 'done') {
-        doneEvents.push({ t, w })
-        if (firstDone === null) firstDone = t
-      } else if (next !== 'done' && cat === 'done') {
-        doneEvents.push({ t, w: -w })
+    for (const st of timeline.steps) points.add(st.t)
+    const inScopeAt = (t) => intervals.some(([s0, e0]) => t >= s0 && t < e0)
+
+    let wasIn = false
+    let wasDone = false
+    let completedOnce = false
+    for (const t of [...points].sort((x, y) => x - y)) {
+      const isIn = inScopeAt(t)
+      const isDone = isIn && categoryAt(timeline, t) === 'done'
+      if (isIn !== wasIn) {
+        scopeEvents.push({ t, w: isIn ? w : -w })
+        weeklyEvents.push({ t, kind: isIn ? 'added' : 'removed', w })
       }
-      cat = next
+      if (isDone !== wasDone) {
+        doneEvents.push({ t, w: isDone ? w : -w })
+        if (isDone && !completedOnce) {
+          completedOnce = true
+          weeklyEvents.push({ t, kind: 'completed', w })
+        }
+      }
+      wasIn = isIn
+      wasDone = isDone
     }
-    // Current state wins when history is missing its final hop.
-    if (cat !== 'done' && categoryOf(issue) === 'done') {
-      const t = toMs(issue.resolved) ?? toMs(issue.status_changed) ?? created
-      doneEvents.push({ t: Math.max(t, created), w })
-      if (firstDone === null) firstDone = Math.max(t, created)
-    }
-    perIssue.push({ created, firstDone, w })
+    if (completedOnce) diag.everDone += 1
   }
 
   if (!scopeEvents.length) return { series: [], weekly: [], empty: true }
@@ -919,11 +948,13 @@ export function burnup({ issues, cloudId = activeCloudId(), metric = 'count', fr
     while (si < scopeEvents.length && scopeEvents[si].t <= boundary) scope += scopeEvents[si++].w
     while (di < doneEvents.length && doneEvents[di].t <= boundary) done += doneEvents[di++].w
     if (boundary < fromMs) continue
+    const s0 = Math.max(0, scope)
+    const d0 = Math.min(s0, Math.max(0, done))
     series.push({
       date: dayKey(day),
-      scope: Number(scope.toFixed(2)),
-      done: Number(Math.max(0, done).toFixed(2)),
-      pct: scope > 0 ? Number(((Math.max(0, done) / scope) * 100).toFixed(2)) : 0,
+      scope: Number(s0.toFixed(2)),
+      done: Number(d0.toFixed(2)),
+      pct: s0 > 0 ? Number(((d0 / s0) * 100).toFixed(2)) : 0,
     })
   }
 
@@ -937,20 +968,25 @@ export function burnup({ issues, cloudId = activeCloudId(), metric = 'count', fr
     return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day)
   }
   const weekly = new Map()
-  const bucket = (t) => {
-    const k = dayKey(weekStart(t))
-    if (!weekly.has(k)) weekly.set(k, { week: k, added: 0, completed: 0 })
-    return weekly.get(k)
-  }
-  for (const p of perIssue) {
-    if (p.created >= fromMs) bucket(p.created).added += p.w
-    if (p.firstDone !== null && p.firstDone >= fromMs) bucket(p.firstDone).completed += p.w
+  for (const e of weeklyEvents) {
+    if (e.t < fromMs) continue
+    const k = dayKey(weekStart(e.t))
+    if (!weekly.has(k)) weekly.set(k, { week: k, added: 0, completed: 0, removed: 0 })
+    weekly.get(k)[e.kind] += e.w
   }
 
   return {
     metric,
     series: thinned,
-    weekly: [...weekly.values()].sort((a, b) => a.week.localeCompare(b.week)),
+    weekly: [...weekly.values()]
+      .map((r) => ({
+        ...r,
+        added: Number(r.added.toFixed(2)),
+        completed: Number(r.completed.toFixed(2)),
+        removed: Number(r.removed.toFixed(2)),
+      }))
+      .sort((a, b) => a.week.localeCompare(b.week)),
+    history: { ...diag, formerMembers, membershipTracked: !!tracker },
   }
 }
 
@@ -970,37 +1006,18 @@ export function graphTimeline({ issues, cloudId = activeCloudId(), maxStories = 
   const nodeSet = new Map(included.map((i) => [i.id, i]))
 
   const history = statusHistoryFor(cloudId, included.map((i) => i.id))
-  const statusMeta = new Map(
-    db.prepare('SELECT id, name, category_key FROM statuses WHERE cloud_id = ?').all(cloudId)
-      .map((s) => [String(s.id), s])
-  )
-  // Resolve by id, but fall back to the recorded status name so a hop whose
-  // id is unknown (other workflow, renamed status) still lands in the right
-  // category — a "Closed" that never resolved would otherwise read as active.
-  const catOf = (statusId, statusName, fallback = 'indeterminate') => {
-    const m = statusMeta.get(String(statusId))
-    if (!m && !statusName) return fallback
-    return categoryForStatusName(statusName || m?.name, m?.category_key || fallback)
-  }
+  const { catOf } = statusCategoryResolver(cloudId)
   const toMs = (s) => (s ? new Date(s).getTime() : null)
 
   const nodes = included
     .map((i) => {
       const created = toMs(i.created)
       if (!created) return null
-      const hist = (history.get(i.id) || []).filter((h) => toMs(h.at) !== null)
-      const initial = hist.length ? catOf(hist[0].from_id, hist[0].from_status, 'new') : categoryOf(i)
-      const transitions = []
-      let cat = initial
-      for (const h of hist) {
-        const next = catOf(h.to_id, h.to_status)
-        if (next === cat) continue
-        transitions.push({ at: Math.max(toMs(h.at), created), cat: next })
-        cat = next
-      }
-      if (!hist.length && categoryOf(i) !== initial) {
-        transitions.push({ at: toMs(i.status_changed) ?? created, cat: categoryOf(i) })
-      }
+      // Same reconstruction as the burn-down: no history never means "done
+      // since creation".
+      const timeline = categoryTimeline(i, history.get(i.id) || [], catOf)
+      const initial = timeline.initial
+      const transitions = timeline.steps.map((st) => ({ at: st.t, cat: st.cat }))
       return {
         id: i.id,
         key: i.key,

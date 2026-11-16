@@ -72,7 +72,14 @@ export type SyncStatus = {
     status: string
     startedAt: number
     finishedAt: number | null
-    stats: { issues: number; changelogs: number; projects: number; issuesInDb: number } | null
+    stats: {
+      issues: number
+      changelogs: number
+      changelogsRefetched?: number
+      changelogsKept?: number
+      projects: number
+      issuesInDb: number
+    } | null
     error: string | null
   } | null
 }
@@ -203,8 +210,34 @@ export type GraphData = {
 export type BurnupData = {
   metric?: string
   series: { date: string; scope: number; done: number; pct: number }[]
-  weekly: { week: string; added: number; completed: number }[]
+  weekly: { week: string; added: number; completed: number; removed?: number }[]
   empty?: boolean
+  /** How much of the replay rests on recorded changelogs versus inference. */
+  history?: BurnupHistory
+  /** Present-state filters the server dropped because they would erase history. */
+  ignoredFilters?: string[]
+}
+
+export type BurnupHistory = {
+  leaves: number
+  withHistory: number
+  inferred: number
+  movedOut: number
+  everDone: number
+  formerMembers: number
+  membershipTracked: boolean
+}
+
+export type HistoryHealth = {
+  ready: boolean
+  issues: number
+  withStatusHistory: number
+  movedWithoutHistory: number
+  staleHistory: number
+  parentMoves: number
+  issuesWithParentMoves: number
+  historyVersion: number
+  historyVersionCurrent: number
 }
 
 export type TimelineNode = {

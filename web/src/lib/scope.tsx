@@ -70,11 +70,14 @@ type Ctx = {
   catalog: Catalog | null
   refreshCatalog: () => Promise<void>
   sync: SyncStatus | null
-  startSync: (mode: 'incremental' | 'full') => Promise<void>
+  startSync: (mode: SyncMode) => Promise<void>
   cancelSync: () => Promise<void>
   syncError: string | null
   siteUrl: string | null
 }
+
+/** incremental: changed issues · full: everything · history: changed issues + every changelog. */
+export type SyncMode = 'incremental' | 'full' | 'history'
 
 const ScopeContext = createContext<Ctx | null>(null)
 
@@ -151,7 +154,7 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
     }
   }, [refreshCatalog, revision])
 
-  const startSync = useCallback(async (mode: 'incremental' | 'full') => {
+  const startSync = useCallback(async (mode: SyncMode) => {
     setSyncError(null)
     try {
       await api.post('/sync', { mode })

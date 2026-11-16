@@ -37,11 +37,13 @@ export function FlowInOut({
   if (!data.weekly.length) return null
   let addedSum = 0
   let completedSum = 0
+  let removedSum = 0
   const weeks = cumulative
     ? data.weekly.map((d) => ({
         week: d.week,
         added: (addedSum += d.added),
         completed: (completedSum += d.completed),
+        removed: (removedSum += d.removed ?? 0),
       }))
     : data.weekly
 
@@ -214,17 +216,25 @@ export function FlowInOut({
               value: `${full(weeks[hover.i].completed)}${unit}`,
               color: 'var(--series-1)',
             },
+            // Work moved out of scope (another epic) — neither open nor done here.
+            ...(weeks[hover.i].removed
+              ? [{
+                  name: cumulative ? 'moved out to date' : 'moved out',
+                  value: `${full(weeks[hover.i].removed ?? 0)}${unit}`,
+                  color: 'var(--text-muted)',
+                }]
+              : []),
           ]}
           total={
             cumulative
               ? {
                   name: 'still open',
-                  value: `${full(weeks[hover.i].added - weeks[hover.i].completed)}${unit}`,
+                  value: `${full(weeks[hover.i].added - weeks[hover.i].completed - (weeks[hover.i].removed ?? 0))}${unit}`,
                 }
               : {
                   name: 'net scope change',
-                  value: `${weeks[hover.i].added - weeks[hover.i].completed >= 0 ? '+' : ''}${full(
-                    weeks[hover.i].added - weeks[hover.i].completed
+                  value: `${weeks[hover.i].added - (weeks[hover.i].removed ?? 0) - weeks[hover.i].completed >= 0 ? '+' : ''}${full(
+                    weeks[hover.i].added - (weeks[hover.i].removed ?? 0) - weeks[hover.i].completed
                   )}${unit}`,
                 }
           }
@@ -248,6 +258,7 @@ function roundedBottom(x: number, y: number, w: number, h: number, r: number) {
 
 export function FlowInOutTable({ data }: { data: BurnupData }) {
   const signed = (n: number) => `${n >= 0 ? '+' : ''}${full(n)}`
+  const anyRemoved = data.weekly.some((d) => d.removed)
   return (
     <DataGrid
       rows={data.weekly}
@@ -264,12 +275,21 @@ export function FlowInOutTable({ data }: { data: BurnupData }) {
           align: 'right',
           render: (d) => full(d.completed),
         },
+        ...(anyRemoved
+          ? [{
+              key: 'removed',
+              label: 'Moved out',
+              value: (d: BurnupData['weekly'][number]) => d.removed ?? 0,
+              align: 'right' as const,
+              render: (d: BurnupData['weekly'][number]) => full(d.removed ?? 0),
+            }]
+          : []),
         {
           key: 'net',
           label: 'Net',
-          value: (d) => d.added - d.completed,
+          value: (d) => d.added - (d.removed ?? 0) - d.completed,
           align: 'right',
-          render: (d) => signed(d.added - d.completed),
+          render: (d) => signed(d.added - (d.removed ?? 0) - d.completed),
           format: signed,
         },
       ]}

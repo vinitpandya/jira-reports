@@ -1,6 +1,6 @@
 import { db, getConfig, setConfig } from './db.js'
 import { activeCloudId, fetchAccessibleResources } from './oauth.js'
-import { jiraFetch, searchIssues, fetchChangelogs } from './jiraClient.js'
+import { jiraFetch, searchIssues, fetchChangelogs, fetchIssueChangelog } from './jiraClient.js'
 
 /* ------------------------------------------------------------------ state */
 
@@ -340,7 +340,28 @@ async function closeHierarchy(cloudId, fieldIds, signal) {
 
 /* ------------------------------------------------------------ changelogs */
 
-function recordChangelogs(cloudId, map) {
+/**
+ * Bump when the changelog capture changes shape (new fields recorded), so the
+ * next sync re-reads every issue's history instead of only the changed ones.
+ * v2: parent / Epic Link / Parent Link moves, all changelog fields requested.
+ */
+export const HISTORY_VERSION = 2
+
+/** Which parent-like field a changelog item moves, or null. */
+function parentFieldOf(item, fieldIds) {
+  const name = (item.field || '').toLowerCase()
+  const id = item.fieldId || ''
+  if (id === 'parent' || name === 'issueparentassociation' || name === 'parent') return 'parent'
+  if (name === 'epic link' || (fieldIds.epicLink && id === fieldIds.epicLink)) return 'epic-link'
+  if (name === 'parent link' || (fieldIds.parentLink && id === fieldIds.parentLink)) return 'parent-link'
+  return null
+}
+
+/** Changelog ids are issue ids; strings are keys ("ABC-12"). */
+const idOrNull = (v) => (v && /^\d+$/.test(String(v)) ? String(v) : null)
+const keyOrNull = (v) => (v && /^[A-Z][A-Z0-9_]*-\d+$/.test(String(v)) ? String(v) : null)
+
+function recordChangelogs(cloudId, map, fieldIds) {
   const sStmt = db.prepare(
     `INSERT OR REPLACE INTO status_history
      (cloud_id, issue_id, at, from_id, from_status, to_id, to_status, author_id, author_name)
@@ -351,18 +372,37 @@ function recordChangelogs(cloudId, map) {
      (cloud_id, issue_id, at, from_id, from_name, to_id, to_name)
      VALUES (?, ?, ?, ?, ?, ?, ?)`
   )
+  const pStmt = db.prepare(
+    `INSERT OR REPLACE INTO parent_history
+     (cloud_id, issue_id, at, field, from_id, from_key, to_id, to_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  )
   const cStmt = db.prepare(
     `INSERT INTO changelog_cursor (cloud_id, issue_id, issue_updated, fetched_at)
      VALUES (?, ?, (SELECT updated FROM issues WHERE cloud_id = ? AND id = ?), ?)
      ON CONFLICT(cloud_id, issue_id) DO UPDATE SET
        issue_updated = excluded.issue_updated, fetched_at = excluded.fetched_at`
   )
+  const hasHistory = db.prepare(
+    `SELECT EXISTS (SELECT 1 FROM status_history WHERE cloud_id = ? AND issue_id = ?)
+         OR EXISTS (SELECT 1 FROM parent_history WHERE cloud_id = ? AND issue_id = ?) AS n`
+  )
+  let kept = 0
 
   const write = db.transaction(() => {
     const now = Date.now()
     for (const [issueId, histories] of map) {
+      // A Jira changelog only ever grows. An empty answer for an issue we
+      // already hold history for is a gap in the response, not a reset —
+      // keep what we have rather than erase the issue's past.
+      if (!histories.length && hasHistory.get(cloudId, issueId, cloudId, issueId).n) {
+        kept += 1
+        cStmt.run(cloudId, issueId, cloudId, issueId, now)
+        continue
+      }
       db.prepare('DELETE FROM status_history WHERE cloud_id = ? AND issue_id = ?').run(cloudId, issueId)
       db.prepare('DELETE FROM assignee_history WHERE cloud_id = ? AND issue_id = ?').run(cloudId, issueId)
+      db.prepare('DELETE FROM parent_history WHERE cloud_id = ? AND issue_id = ?').run(cloudId, issueId)
       for (const h of histories) {
         for (const item of h.items || []) {
           if (item.field === 'status' || item.fieldId === 'status') {
@@ -378,6 +418,14 @@ function recordChangelogs(cloudId, map) {
               item.from || null, item.fromString || null,
               item.to || null, item.toString || null
             )
+          } else {
+            const field = parentFieldOf(item, fieldIds)
+            if (!field) continue
+            pStmt.run(
+              cloudId, issueId, h.created, field,
+              idOrNull(item.from), keyOrNull(item.fromString) || keyOrNull(item.from),
+              idOrNull(item.to), keyOrNull(item.toString) || keyOrNull(item.to)
+            )
           }
         }
       }
@@ -385,42 +433,81 @@ function recordChangelogs(cloudId, map) {
     }
   })
   write()
+  return kept
 }
 
-async function syncChangelogs(cloudId, signal) {
+/** Moves recorded only by key get their ids once the parent is in the cache. */
+function resolveParentKeys(cloudId) {
+  for (const [idCol, keyCol] of [['from_id', 'from_key'], ['to_id', 'to_key']]) {
+    db.prepare(
+      `UPDATE parent_history SET ${idCol} = (
+         SELECT p.id FROM issues p WHERE p.cloud_id = parent_history.cloud_id AND p.key = parent_history.${keyCol}
+       )
+       WHERE cloud_id = ? AND ${idCol} IS NULL AND ${keyCol} IS NOT NULL`
+    ).run(cloudId)
+  }
+}
+
+async function syncChangelogs(cloudId, signal, fieldIds) {
   // Only issues whose "updated" moved past what the cursor recorded.
   const stale = db
     .prepare(
-      `SELECT i.id FROM issues i
+      `SELECT i.id, i.created, i.updated FROM issues i
        LEFT JOIN changelog_cursor c ON c.cloud_id = i.cloud_id AND c.issue_id = i.id
        WHERE i.cloud_id = ? AND (c.issue_updated IS NULL OR c.issue_updated <> i.updated)`
     )
     .all(cloudId)
-    .map((r) => r.id)
 
   if (!stale.length) {
+    resolveParentKeys(cloudId)
     progress('changelog', 'Status history already current', { changelogs: 0 })
-    return 0
+    return { changelogs: 0, refetched: 0, kept: 0 }
   }
 
+  // An issue never touched after creation has no changelog to miss.
+  const touched = new Set(
+    stale
+      .filter((r) => {
+        const c = new Date(r.created).getTime()
+        const u = new Date(r.updated).getTime()
+        return !(Number.isFinite(c) && Number.isFinite(u) && u - c < 5_000)
+      })
+      .map((r) => r.id)
+  )
+
   let done = 0
+  let refetched = 0
+  let kept = 0
+  const ids = stale.map((r) => r.id)
   const batch = 500
-  for (let i = 0; i < stale.length; i += batch) {
+  for (let i = 0; i < ids.length; i += batch) {
     if (signal.aborted) throw new Error('Sync cancelled')
-    const chunk = stale.slice(i, i + batch)
-    progress('changelog', `Reading status history ${done}/${stale.length}…`, {
+    const chunk = ids.slice(i, i + batch)
+    progress('changelog', `Reading change history ${done}/${ids.length}…`, {
       changelogs: done,
-      changelogTotal: stale.length,
+      changelogTotal: ids.length,
     })
     const map = await fetchChangelogs({ issueIds: chunk, cloudId, signal })
-    // Issues with no changelog still need a cursor so they are not re-fetched.
+
+    // The bulk endpoint can leave issues out of its answer. Anything that was
+    // edited after creation gets asked for individually before we accept
+    // "no history" for it.
+    const missing = chunk.filter((id) => !map.has(id) && touched.has(id))
+    for (const [n, id] of missing.entries()) {
+      if (signal.aborted) throw new Error('Sync cancelled')
+      progress('changelog', `Re-reading history issue by issue ${n + 1}/${missing.length} (batch ${done + 1}–${done + chunk.length})…`)
+      map.set(id, await fetchIssueChangelog({ issueId: id, cloudId }))
+      refetched += 1
+    }
+    // Untouched issues still need a cursor so they are not re-fetched.
     for (const id of chunk) if (!map.has(id)) map.set(id, [])
-    recordChangelogs(cloudId, map)
+    kept += recordChangelogs(cloudId, map, fieldIds)
     done += chunk.length
   }
 
-  progress('changelog', 'Status history up to date', { changelogs: done })
-  return done
+  resolveParentKeys(cloudId)
+  progress('changelog', 'Change history up to date', { changelogs: done })
+  return { changelogs: done, refetched, kept }
 }
 
 /* ------------------------------------------------------------------ main */
@@ -474,6 +561,15 @@ export async function runSync({ mode = 'incremental' } = {}) {
 
     if (!rows.length) throw new Error('No projects selected to sync — choose some in Settings')
 
+    // A full rebuild, an explicit history rebuild, or a changelog format bump
+    // re-reads every issue's history rather than only the changed ones.
+    if (mode === 'full' || mode === 'history' || (getConfig('history_version', 1) || 1) < HISTORY_VERSION) {
+      db.prepare('DELETE FROM changelog_cursor WHERE cloud_id = ?').run(cloudId)
+      // Recorded now: a cancelled rebuild resumes from the cursor next time
+      // instead of starting over.
+      setConfig('history_version', HISTORY_VERSION)
+    }
+
     const since = mode === 'full' ? null : getConfig('last_issue_sync', null)
     const fields = issueFieldList(fieldIds)
     let total = 0
@@ -512,7 +608,7 @@ export async function runSync({ mode = 'incremental' } = {}) {
        WHERE cloud_id = ? AND parent_id IS NULL AND parent_key IS NOT NULL`
     ).run(cloudId)
 
-    const changelogs = await syncChangelogs(cloudId, signal)
+    const history = await syncChangelogs(cloudId, signal, fieldIds)
 
     // Watermark for the next incremental pass, minus a minute of slack for
     // clock skew between this machine and Jira.
@@ -524,7 +620,9 @@ export async function runSync({ mode = 'incremental' } = {}) {
 
     const stats = {
       issues: total,
-      changelogs,
+      changelogs: history.changelogs,
+      changelogsRefetched: history.refetched,
+      changelogsKept: history.kept,
       projects: rows.length,
       issuesInDb: db
         .prepare('SELECT COUNT(*) AS n FROM issues WHERE cloud_id = ?')

@@ -118,11 +118,30 @@ export async function searchIssues({ jql, fields, cloudId, expand, onPage, pageS
   return count
 }
 
+/** Every changelog entry for one issue, paging until Jira says it is the last. */
+export async function fetchIssueChangelog({ issueId, cloudId }) {
+  const histories = []
+  let startAt = 0
+  for (;;) {
+    const page = await jiraFetch(`/api/3/issue/${issueId}/changelog`, {
+      cloudId,
+      query: { startAt, maxResults: 100 },
+    })
+    const values = page?.values ?? []
+    histories.push(...values)
+    startAt += values.length
+    if (page?.isLast || !values.length || (page?.total != null && startAt >= page.total)) break
+  }
+  return histories
+}
+
 /**
  * Changelogs for many issues. Prefers the bulkfetch endpoint (one call per 100
- * issues); falls back to per-issue paging where it is unavailable.
+ * issues); falls back to per-issue paging where it is unavailable. With no
+ * `fieldIds`, every field's changes come back — status, assignee and the
+ * parent / Epic Link / Parent Link moves the reports replay.
  */
-export async function fetchChangelogs({ issueIds, fieldIds = ['status', 'assignee'], cloudId, signal }) {
+export async function fetchChangelogs({ issueIds, fieldIds = null, cloudId, signal }) {
   const out = new Map()
   const chunkSize = 100
 
@@ -139,7 +158,7 @@ export async function fetchChangelogs({ issueIds, fieldIds = ['status', 'assigne
           method: 'POST',
           cloudId,
           body: {
-            fieldIds,
+            ...(fieldIds?.length ? { fieldIds } : {}),
             issueIdsOrKeys: chunk,
             maxResults: 1000,
             ...(nextPageToken ? { nextPageToken } : {}),
@@ -165,18 +184,8 @@ export async function fetchChangelogs({ issueIds, fieldIds = ['status', 'assigne
     if (bulkOk) continue
 
     for (const id of chunk) {
-      const histories = []
-      let startAt = 0
-      for (;;) {
-        const page = await jiraFetch(`/api/3/issue/${id}/changelog`, {
-          cloudId,
-          query: { startAt, maxResults: 100 },
-        })
-        histories.push(...(page?.values ?? []))
-        startAt += page?.values?.length ?? 0
-        if (page?.isLast || startAt >= (page?.total ?? 0) || !page?.values?.length) break
-      }
-      out.set(String(id), histories)
+      if (signal?.aborted) throw new Error('Sync cancelled')
+      out.set(String(id), await fetchIssueChangelog({ issueId: id, cloudId }))
     }
   }
 

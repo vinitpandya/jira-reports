@@ -11,7 +11,7 @@ import {
   setCredentials,
   activeCloudId,
 } from './oauth.js'
-import { runSync, syncStatus, cancelSync } from './sync.js'
+import { runSync, syncStatus, cancelSync, HISTORY_VERSION } from './sync.js'
 import { templateFor, defaultPageLayout, instantiateLayout } from './pageTemplates.js'
 import {
   resolveScope,
@@ -53,6 +53,27 @@ function scopeFrom(query) {
     descendants: query.descendants !== 'false',
     followLinks: query.followLinks === 'true',
   })
+}
+
+/**
+ * Scope for reports that replay history (burn-up/down, added vs completed,
+ * CFD, cycle time, network replay). "Exclude done" and the status filter
+ * describe where issues are *today*; applied before a replay they delete the
+ * very work whose completion the chart is meant to show. They are dropped
+ * here and echoed back as `ignoredFilters` so the UI can say so.
+ */
+function historyScopeFrom(query) {
+  const scope = resolveScope({
+    projects: csv(query.projects),
+    roots: csv(query.roots),
+    types: csv(query.types),
+    descendants: query.descendants !== 'false',
+    followLinks: query.followLinks === 'true',
+  })
+  const ignoredFilters = []
+  if (query.excludeDone === 'true') ignoredFilters.push('Exclude done')
+  if (csv(query.statuses).length) ignoredFilters.push('Statuses')
+  return { ...scope, ignoredFilters }
 }
 
 /** Time window for snapshot reports: keep issues touched since `from`. */
@@ -143,7 +164,7 @@ router.post('/projects/select', wrap(async (req, res) => {
 
 router.post('/sync', wrap(async (req, res) => {
   if (syncStatus().running) return res.status(409).json({ error: 'A sync is already running' })
-  const mode = req.body?.mode === 'full' ? 'full' : 'incremental'
+  const mode = ['full', 'history'].includes(req.body?.mode) ? req.body.mode : 'incremental'
   if (mode === 'full') setConfig('last_issue_sync', null)
   // Fire and forget; the client polls /sync/status, which also surfaces errors.
   runSync({ mode }).catch((err) => console.error('[sync]', err))
@@ -151,6 +172,39 @@ router.post('/sync', wrap(async (req, res) => {
 }))
 
 router.get('/sync/status', (req, res) => res.json(syncStatus()))
+
+/**
+ * How much of the cache's past is backed by real changelogs. Work that left
+ * "to do" but has no status history is reconstructed from dates alone; a
+ * large share of it means a history rebuild is due.
+ */
+router.get('/sync/history-health', wrap(async (req, res) => {
+  const cloudId = activeCloudId()
+  if (!cloudId) return res.json({ ready: false })
+  const row = db.prepare(
+    `SELECT
+       COUNT(*) AS issues,
+       SUM(CASE WHEN EXISTS (SELECT 1 FROM status_history h WHERE h.cloud_id = i.cloud_id AND h.issue_id = i.id) THEN 1 ELSE 0 END) AS with_status,
+       SUM(CASE WHEN COALESCE(i.status_category, 'new') <> 'new'
+                 AND NOT EXISTS (SELECT 1 FROM status_history h WHERE h.cloud_id = i.cloud_id AND h.issue_id = i.id)
+                THEN 1 ELSE 0 END) AS moved_without_history,
+       SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM changelog_cursor c WHERE c.cloud_id = i.cloud_id AND c.issue_id = i.id AND c.issue_updated = i.updated)
+                THEN 1 ELSE 0 END) AS stale
+     FROM issues i WHERE i.cloud_id = ?`
+  ).get(cloudId)
+  const moves = db.prepare('SELECT COUNT(*) AS n, COUNT(DISTINCT issue_id) AS issues FROM parent_history WHERE cloud_id = ?').get(cloudId)
+  res.json({
+    ready: true,
+    issues: row.issues || 0,
+    withStatusHistory: row.with_status || 0,
+    movedWithoutHistory: row.moved_without_history || 0,
+    staleHistory: row.stale || 0,
+    parentMoves: moves.n || 0,
+    issuesWithParentMoves: moves.issues || 0,
+    historyVersion: getConfig('history_version', 1),
+    historyVersionCurrent: HISTORY_VERSION,
+  })
+}))
 
 router.post('/sync/cancel', wrap(async (req, res) => {
   res.json({ cancelled: cancelSync() })
@@ -254,7 +308,7 @@ router.get('/reports/summary', wrap(async (req, res) => {
 }))
 
 router.get('/reports/cfd', wrap(async (req, res) => {
-  const { issues, cloudId } = scopeFrom(req.query)
+  const { issues, cloudId } = historyScopeFrom(req.query)
   let set = issues
   if (req.query.leavesOnly === 'true') {
     // Anything that is somebody's parent within this scope is not a leaf.
@@ -320,7 +374,7 @@ router.get('/reports/crosstab', wrap(async (req, res) => {
 }))
 
 router.get('/reports/timeseries', wrap(async (req, res) => {
-  const { issues } = scopeFrom(req.query)
+  const { issues } = historyScopeFrom(req.query)
   res.json(
     timeseries({
       issues,
@@ -377,9 +431,10 @@ router.get('/reports/issues', wrap(async (req, res) => {
  * whose mapped category is not done — the chart's last value, itemised.
  */
 router.get('/reports/remaining', wrap(async (req, res) => {
-  const { issues } = scopeFrom(req.query)
+  const { issues, ignoredFilters } = historyScopeFrom(req.query)
   const open = workItems(issues).filter((i) => categoryOf(i) !== 'done')
   res.json({
+    ignoredFilters,
     total: open.length,
     points: open.reduce((s, i) => s + (i.story_points || 0), 0),
     issues: open.sort(byUpdatedDesc).map(issueRow),
@@ -399,7 +454,7 @@ router.get('/reports/chord', wrap(async (req, res) => {
 }))
 
 router.get('/reports/cycletime', wrap(async (req, res) => {
-  const { issues } = scopeFrom(req.query)
+  const { issues } = historyScopeFrom(req.query)
   const groupBy = ['epic', 'assignee', 'project'].includes(req.query.groupBy)
     ? req.query.groupBy
     : 'epic'
@@ -423,15 +478,18 @@ router.get('/reports/graph', wrap(async (req, res) => {
 }))
 
 router.get('/reports/burnup', wrap(async (req, res) => {
-  const { issues, cloudId } = scopeFrom(req.query)
-  res.json(
-    burnup({
+  const { issues, cloudId, anchorIds, ignoredFilters } = historyScopeFrom(req.query)
+  res.json({
+    ...burnup({
       issues,
       cloudId,
       metric: req.query.metric || 'count',
       from: req.query.from,
-    })
-  )
+      anchorIds,
+      types: csv(req.query.types),
+    }),
+    ignoredFilters,
+  })
 }))
 
 /**
@@ -472,7 +530,7 @@ router.get('/reports/epic-dates', wrap(async (req, res) => {
 }))
 
 router.get('/reports/graph-timeline', wrap(async (req, res) => {
-  const { issues, cloudId } = scopeFrom(req.query)
+  const { issues, cloudId } = historyScopeFrom(req.query)
   res.json(
     graphTimeline({
       issues,
